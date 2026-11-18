@@ -188,12 +188,45 @@ public Action Command_DisplayMenu(int client, int args)
 {
 	if (client == 0)
 	{
-		ReplyToCommand(client, "[SM] %t", "Command is in-game only");
-		return Plugin_Handled;
+		// On a listen server the host's own console runs commands as client 0,
+		// so open the menu on the host instead of rejecting it. Dedicated
+		// servers keep the stock behaviour.
+		client = GetListenServerHost();
+
+		if (client == 0)
+		{
+			ReplyToCommand(client, "[SM] %t", "Command is in-game only");
+			return Plugin_Handled;
+		}
 	}
-	
+
 	hAdminMenu.Display(client, TopMenuPosition_Start);
 	return Plugin_Handled;
+}
+
+stock int GetListenServerHost()
+{
+	if (IsDedicatedServer())
+	{
+		return 0;
+	}
+
+	// The host always holds slot 1; fall back to the first real client in case
+	// the slot differs.
+	if (IsClientConnected(1) && !IsFakeClient(1) && IsClientInGame(1))
+	{
+		return 1;
+	}
+
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (IsClientConnected(i) && !IsFakeClient(i) && IsClientInGame(i))
+		{
+			return i;
+		}
+	}
+
+	return 0;
 }
 
 stock int UTIL_AddTargetsToMenu2(Menu menu, int source_client, int flags)
