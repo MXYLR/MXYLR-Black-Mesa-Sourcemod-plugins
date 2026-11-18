@@ -1,0 +1,71 @@
+// bms_match.games.txt — gamedata for bms_match (merged into BMAG.smx)
+//
+// 只提供一个东西：CGameRules::SetState(int) 的函数地址。
+//
+// ── 为什么不再用 PrepSDKCall_SetVirtual(160) ─────────────────────────────────
+// 旧代码写死「vtable 槽 160」。2026-11-17 的 server.dll 更新在 CGameRules 族里
+// 插入了 4 个新虚函数（三个 gamerules vtable 一致 +4：194 -> 198、201 -> 205、
+// 143 -> 147），SetState 因此从槽 160 移到槽 164。写死槽位会在新版调用到错误的
+// 虚函数（行为不可预期，可能直接崩服）。
+//
+// 旧 build  md5 68278cc0c3a1e23d96c2b9d722ae7670   9,509,376 B
+//           SetState @ 0x1035E510，槽 160，vtable 0x106AC848（CBM_MP_Coop_GameRules）
+// 新 build  md5 421fee309fdc22f3dc7b5207a4810c3e   9,530,984 B
+//           SetState @ 0x1035F5F0，槽 164，vtable 0x106AE0E0
+//
+// 两个版本的函数头逐字节相同，只有第 56 字节起的虚调用位移不同：
+//   旧  FF 90 8C 02 00 00    call dword ptr [eax+0x28C]
+//   新  FF 90 9C 02 00 00    call dword ptr [eax+0x29C]
+// 所以把该 imm32 整体通配，签名在磁盘镜像和任意重定位后的加载镜像里都唯一命中
+// （已用 smx_analysis/sig_check.py 在两版、两个模拟基址上验证）。
+//
+// 插件侧：LoadGameConfigFile("bms_match.games") → GameConfGetAddress
+// ("CGameRules_SetState") 取地址 → PrepSDKCall_SetAddress +
+// StartPrepSDKCall(SDKCall_GameRules)（this 由 SM 自动填成 g_pGameRules）。
+// ⚠ LoadGameConfigFile 只会在名字后面补 ".txt"，不会把 "bms_match" 扩展成
+//   "bms_match.games.txt" —— 调用名必须写全 "bms_match.games"，否则加载失败。
+// gamedata 缺失或签名失配时句柄保持 INVALID_HANDLE，
+// Bms_EngineReset 退回插件侧的 Bms_CleanupMap 路径，不会崩。
+// ---------------------------------------------------------------------------
+
+"Games"
+{
+	"#default"
+	{
+		"Addresses"
+		{
+			"CGameRules_SetState"
+			{
+				"windows"
+				{
+					"signature"	"CGameRules_SetState"
+				}
+			}
+		}
+
+		"Signatures"
+		{
+			// CGameRules::SetState 函数头（两版相同，新地址 0x1035F5F0 / 旧 0x1035E510）：
+			//   55 8B EC              push ebp; mov ebp, esp
+			//   53 8B 5D 08           push ebx; mov ebx,[ebp+8]      <- int newState
+			//   8B C3                 mov eax, ebx
+			//   56 57 33 FF           push esi; push edi; xor edi, edi
+			//   8B F1                 mov esi, ecx                  <- this
+			//   2B C7 74 12           sub eax, edi; je +0x12
+			//   83 E8 02 74 08        sub eax, 2; je +8
+			//   48 75 0D              dec eax; jne +0x0D
+			//   8D 7E 74 / 60 / 4C    按状态选 StateRound/Warmup/Intermission 对象
+			//   83 BE 88 00 00 00 00  cmp dword ptr [esi+0x88], 0
+			//   74 20                 je +0x20
+			//   8B 06                 mov eax,[esi]
+			//   FF 76 40              push dword ptr [esi+0x40]
+			//   FF 90 imm32           call dword ptr [eax+disp]     <- 槽位随版本变，通配
+			//   8B 8E 88 00           mov ecx,[esi+0x88]
+			"CGameRules_SetState"
+			{
+				"library"	"server"
+				"windows"	"\x55\x8B\xEC\x53\x8B\x5D\x08\x8B\xC3\x56\x57\x33\xFF\x8B\xF1\x2B\xC7\x74\x12\x83\xE8\x02\x74\x08\x48\x75\x0D\x8D\x7E\x74\xEB\x08\x8D\x7E\x60\xEB\x03\x8D\x7E\x4C\x83\xBE\x88\x00\x00\x00\x00\x74\x20\x8B\x06\xFF\x76\x40\xFF\x90\x2A\x2A\x2A\x2A\x8B\x8E\x88\x00"
+			}
+		}
+	}
+}

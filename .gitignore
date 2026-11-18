@@ -1,0 +1,13 @@
+# merge.py 的中间产物,源码在 src/scripting/plugins/(可从 merge.py 重组,不入库)
+smx_analysis/src/scripting/BMAG/*.sp
+
+# 自定义准星客户端 mod(暂时搁置,暂不入库)
+client_mod/
+smx_analysis/REVERSE_CROSSHAIR.md
+
+__pycache__/
+*.pyc
+
+# 备份文件
+*.bak
+*.orig
