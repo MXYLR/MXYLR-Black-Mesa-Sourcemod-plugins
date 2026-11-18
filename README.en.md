@@ -11,7 +11,6 @@ plus a few standalone plugins loaded separately. Prebuilt artifacts are on
 ```
 ├── plugins/                      deployables (backup of the server's plugins/ directory)
 │   ├── BMAG.smx                  the 36-module single plugin = the main artifact
-│   ├── scores_hold.smx           in-house: hold TAB to show the scoreboard (needs a client bind)
 │   ├── bms_rpgReloadFix.smx      third-party: RPG reload fix
 │   ├── bms_weapon_tauStuckFix.smx third-party: tau stuck-weapon fix at low ammo
 │   ├── is_weaponfx.smx           third-party: weapon-animation prewarming
@@ -51,7 +50,6 @@ Each release corresponds to one commit, and its attachments are that build's art
 | Attachment | Where it goes |
 |---|---|
 | `BMAG.smx` | `bms/addons/sourcemod/plugins/` |
-| `scores_hold.smx` | same as above (optional) |
 | `bms_rpgReloadFix.smx` / `bms_weapon_tauStuckFix.smx` / `is_weaponfx.smx` / `is_bms_fix_timelimit.smx` | same as above |
 | `bms_match.games.txt` | `bms/addons/sourcemod/gamedata/` (**required**, do not rename) |
 | `bms_match.cfg` | `bms/addons/sourcemod/configs/` |
@@ -70,7 +68,6 @@ copy /Y plugins\bms_rpgReloadFix.smx       %SRV%\bms\addons\sourcemod\plugins\
 copy /Y plugins\bms_weapon_tauStuckFix.smx %SRV%\bms\addons\sourcemod\plugins\
 copy /Y plugins\is_weaponfx.smx            %SRV%\bms\addons\sourcemod\plugins\
 copy /Y plugins\is_bms_fix_timelimit.smx   %SRV%\bms\addons\sourcemod\plugins\
-copy /Y plugins\scores_hold.smx            %SRV%\bms\addons\sourcemod\plugins\
 copy /Y smx_analysis\src\scripting\translations\*.txt %SRV%\bms\addons\sourcemod\translations\
 copy /Y smx_analysis\src\scripting\gamedata\bms_match.games.txt %SRV%\bms\addons\sourcemod\gamedata\
 copy /Y smx_analysis\src\scripting\configs\bms_match.cfg %SRV%\bms\addons\sourcemod\configs\
@@ -342,27 +339,6 @@ upstream defaults**; this table lists only what each does and this server's devi
 ---
 
 ## ④ Standalone plugins
-
-### `scores_hold.smx` — hold TAB to show the scoreboard
-
-Since the BM client regression, `+showscores` is blocked by a gamerules gate and TAB no longer opens the
-scoreboard. This plugin provides a pair of ordinary commands; bind them to TAB on the client to restore
-"hold to view, release to hide":
-
-```
-alias +bmscores "sm_scores_open"
-alias -bmscores "sm_scores_close"
-bind TAB +bmscores
-```
-
-| Command / ConVar | Description |
-|---|---|
-| `sm_scores_open` / `sm_scores_close` | Open / close the scoreboard (also registered as `+sm_scores` / `-sm_scores`) |
-| `sm_scores_hold` | Default 1; 0 = disable the plugin. Automatically inactive on single-player campaign maps |
-
-> The server never sees TAB being pressed or released, so **players must type these three lines on their own
-> client**. The upside is that no game files are touched, so Steam's file verification and game updates
-> can't wipe it.
 
 ### Single-player campaign plugins (`campaign/`)
 

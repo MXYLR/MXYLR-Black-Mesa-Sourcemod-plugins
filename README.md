@@ -11,7 +11,6 @@ Black Mesa(黑山起源)**死亡竞赛服务器**的 SourceMod 插件集:36 个�
 ```
 ├── plugins/                      部署产物(服务器 plugins/ 目录的备份)
 │   ├── BMAG.smx                  36 模块合一插件 = 主要产物
-│   ├── scores_hold.smx           自研:按住 TAB 显示记分板(需客户端绑键)
 │   ├── bms_rpgReloadFix.smx      第三方:RPG 换弹修复
 │   ├── bms_weapon_tauStuckFix.smx 第三方:tau 低弹药卡枪修复
 │   ├── is_weaponfx.smx           第三方:武器动画预热
@@ -50,7 +49,6 @@ Black Mesa(黑山起源)**死亡竞赛服务器**的 SourceMod 插件集:36 个�
 | 附件 | 放到服务器 |
 |---|---|
 | `BMAG.smx` | `bms/addons/sourcemod/plugins/` |
-| `scores_hold.smx` | 同上(可选) |
 | `bms_rpgReloadFix.smx` / `bms_weapon_tauStuckFix.smx` / `is_weaponfx.smx` / `is_bms_fix_timelimit.smx` | 同上 |
 | `bms_match.games.txt` | `bms/addons/sourcemod/gamedata/`(**必须**,文件名不能改) |
 | `bms_match.cfg` | `bms/addons/sourcemod/configs/` |
@@ -69,7 +67,6 @@ copy /Y plugins\bms_rpgReloadFix.smx       %SRV%\bms\addons\sourcemod\plugins\
 copy /Y plugins\bms_weapon_tauStuckFix.smx %SRV%\bms\addons\sourcemod\plugins\
 copy /Y plugins\is_weaponfx.smx            %SRV%\bms\addons\sourcemod\plugins\
 copy /Y plugins\is_bms_fix_timelimit.smx   %SRV%\bms\addons\sourcemod\plugins\
-copy /Y plugins\scores_hold.smx            %SRV%\bms\addons\sourcemod\plugins\
 copy /Y smx_analysis\src\scripting\translations\*.txt %SRV%\bms\addons\sourcemod\translations\
 copy /Y smx_analysis\src\scripting\gamedata\bms_match.games.txt %SRV%\bms\addons\sourcemod\gamedata\
 copy /Y smx_analysis\src\scripting\configs\bms_match.cfg %SRV%\bms\addons\sourcemod\configs\
@@ -322,25 +319,6 @@ BM 原生的复活点选择链已损坏(`IsSpawnPointValid` 不读标旗、用�
 ---
 
 ## ④ 独立插件
-
-### `scores_hold.smx` — 按住 TAB 显示记分板
-
-BM 客户端回归后 `+showscores` 被一道 gamerules 门挡住,按 TAB 打不开记分板。这个插件提供一对普通命令,
-客户端绑到 TAB 上即可恢复"按住看、松开关":
-
-```
-alias +bmscores "sm_scores_open"
-alias -bmscores "sm_scores_close"
-bind TAB +bmscores
-```
-
-| 命令 / ConVar | 说明 |
-|---|---|
-| `sm_scores_open` / `sm_scores_close` | 打开 / 关闭记分板(另注册 `+sm_scores` / `-sm_scores`) |
-| `sm_scores_hold` | 默认 1;0 = 关掉插件。单人战役地图上自动不生效 |
-
-> 服务端看不到 TAB 的按下/松开,这三行**必须由玩家在自己客户端敲**。好处是不动游戏文件,
-> Steam 校验和游戏更新都抹不掉。
 
 ### 单人战役插件(`campaign/`)
 
