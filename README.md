@@ -44,6 +44,23 @@ Black Mesa(黑山起源)**死亡竞赛服务器**的 SourceMod 插件集:36 个�
 
 ## 下载
 
+### 解压即玩(推荐)
+
+先给 Black Mesa 装好 **SourceMod + MetaMod:Source**,再把对应项目的 zip 解压到
+**Black Mesa 文件夹**(包含 `bms\` 的那一层)即可。三个项目彼此独立,按需下载:
+
+| 项目 | 下载 | 用途 |
+|---|---|---|
+| **BMAG** — 死斗服插件集(35 模块合一 + 4 个第三方插件) | [`BMAG.zip`](https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins/releases/latest/download/BMAG.zip) | 死亡竞赛服务器 |
+| **tau_mp** — 单人战役 tau:高斯跳 / 副攻无冷却 / 跌落伤害封顶 | [`tau_mp.zip`](https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins/releases/latest/download/tau_mp.zip) | 单人剧情 |
+| **hl1tau** — tau 满蓄伤害、溅射半径、穿墙门槛还原成 HL1 数值 | [`hl1tau.zip`](https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins/releases/latest/download/hl1tau.zip) | 单人或死斗 |
+
+zip 内结构是 `bms/addons/sourcemod/…`,并各带一份双语 `README.txt`(前置条件、解压
+位置、装完还必须手动做的事)。**BMAG.zip 故意不含配置**,以免覆盖你已有的
+`bms_match.cfg` / 地图池 —— 这些在 Release 里作为单独附件提供,见下表。
+
+### 单独文件
+
 每个 Release 对应仓库的一个提交,附件就是那次构建的产物:
 
 | 附件 | 放到服务器 |

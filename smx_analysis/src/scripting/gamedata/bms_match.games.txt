@@ -1,31 +1,51 @@
 // bms_match.games.txt — gamedata for bms_match (merged into BMAG.smx)
 //
 // 只提供一个东西：CGameRules::SetState(int) 的函数地址。
+// It provides exactly one thing: the function address of CGameRules::SetState(int).
 //
 // ── 为什么不再用 PrepSDKCall_SetVirtual(160) ─────────────────────────────────
+// ── Why PrepSDKCall_SetVirtual(160) is no longer used
 // 旧代码写死「vtable 槽 160」。2026-11-17 的 server.dll 更新在 CGameRules 族里
 // 插入了 4 个新虚函数（三个 gamerules vtable 一致 +4：194 -> 198、201 -> 205、
 // 143 -> 147），SetState 因此从槽 160 移到槽 164。写死槽位会在新版调用到错误的
 // 虚函数（行为不可预期，可能直接崩服）。
+// Old code hard-coded "vtable slot 160". The 2026-11-17 server.dll update inserted
+// 4 new virtual functions into the CGameRules family (all three gamerules vtables shift by +4: 194 -> 198, 201 -> 205,
+// 143 -> 147), so SetState moved from slot 160 to slot 164. A hard-coded slot calls the wrong
+// virtual function on the new build (unpredictable behaviour, possibly an immediate server crash).
 //
 // 旧 build  md5 68278cc0c3a1e23d96c2b9d722ae7670   9,509,376 B
 //           SetState @ 0x1035E510，槽 160，vtable 0x106AC848（CBM_MP_Coop_GameRules）
 // 新 build  md5 421fee309fdc22f3dc7b5207a4810c3e   9,530,984 B
 //           SetState @ 0x1035F5F0，槽 164，vtable 0x106AE0E0
+// Old build  md5 68278cc0c3a1e23d96c2b9d722ae7670   9,509,376 B
+//           SetState @ 0x1035E510, slot 160, vtable 0x106AC848 (CBM_MP_Coop_GameRules)
+// New build  md5 421fee309fdc22f3dc7b5207a4810c3e   9,530,984 B
+//           SetState @ 0x1035F5F0, slot 164, vtable 0x106AE0E0
 //
 // 两个版本的函数头逐字节相同，只有第 56 字节起的虚调用位移不同：
+// The function header is byte-for-byte identical in both builds; only the virtual-call displacement starting at byte 56 differs:
 //   旧  FF 90 8C 02 00 00    call dword ptr [eax+0x28C]
 //   新  FF 90 9C 02 00 00    call dword ptr [eax+0x29C]
 // 所以把该 imm32 整体通配，签名在磁盘镜像和任意重定位后的加载镜像里都唯一命中
 // （已用 smx_analysis/sig_check.py 在两版、两个模拟基址上验证）。
+// So the whole imm32 is wildcarded; the signature matches uniquely in the on-disk image and in the loaded image after any relocation
+// (verified with smx_analysis/sig_check.py on both builds and two simulated base addresses).
 //
 // 插件侧：LoadGameConfigFile("bms_match.games") → GameConfGetAddress
 // ("CGameRules_SetState") 取地址 → PrepSDKCall_SetAddress +
 // StartPrepSDKCall(SDKCall_GameRules)（this 由 SM 自动填成 g_pGameRules）。
+// Plugin side: LoadGameConfigFile("bms_match.games") → GameConfGetAddress
+// ("CGameRules_SetState") to get the address → PrepSDKCall_SetAddress +
+// StartPrepSDKCall(SDKCall_GameRules) (this is filled in automatically by SM as g_pGameRules).
 // ⚠ LoadGameConfigFile 只会在名字后面补 ".txt"，不会把 "bms_match" 扩展成
 //   "bms_match.games.txt" —— 调用名必须写全 "bms_match.games"，否则加载失败。
+// ⚠ LoadGameConfigFile only appends ".txt" to the name; it does not expand "bms_match" into
+//   "bms_match.games.txt" — the call name must be written in full as "bms_match.games", otherwise loading fails.
 // gamedata 缺失或签名失配时句柄保持 INVALID_HANDLE，
 // Bms_EngineReset 退回插件侧的 Bms_CleanupMap 路径，不会崩。
+// If the gamedata is missing or the signature mismatches, the handle stays INVALID_HANDLE,
+// and Bms_EngineReset falls back to the plugin-side Bms_CleanupMap path without crashing.
 // ---------------------------------------------------------------------------
 
 "Games"
@@ -46,6 +66,7 @@
 		"Signatures"
 		{
 			// CGameRules::SetState 函数头（两版相同，新地址 0x1035F5F0 / 旧 0x1035E510）：
+			// CGameRules::SetState function header (identical in both builds; new address 0x1035F5F0 / old 0x1035E510):
 			//   55 8B EC              push ebp; mov ebp, esp
 			//   53 8B 5D 08           push ebx; mov ebx,[ebp+8]      <- int newState
 			//   8B C3                 mov eax, ebx

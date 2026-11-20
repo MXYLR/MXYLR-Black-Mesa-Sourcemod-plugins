@@ -1,0 +1,78 @@
+================================================================
+ BMAG - Black Mesa deathmatch SourceMod pack
+ BMAG - 黑山死斗服务器 SourceMod 插件包
+================================================================
+
+PREREQUISITES / 前置条件
+  SourceMod and MetaMod:Source must already be installed for
+  Black Mesa in the same folder.
+  同一个 Black Mesa 安装里必须已经装好 SourceMod 与 MetaMod:Source。
+
+INSTALL / 安装
+  Extract this archive into your Black Mesa folder - the folder
+  that contains "bms\" (for example
+  ...\steamapps\common\Black Mesa\).
+  把压缩包解压到 Black Mesa 文件夹 —— 包含 "bms\" 的那一层
+  (例如 ...\steamapps\common\Black Mesa\)。
+
+  Files that will land / 会落到的位置:
+
+    bms\addons\sourcemod\plugins\BMAG.smx
+    bms\addons\sourcemod\plugins\bms_rpgReloadFix.smx
+    bms\addons\sourcemod\plugins\bms_weapon_tauStuckFix.smx
+    bms\addons\sourcemod\plugins\is_weaponfx.smx
+    bms\addons\sourcemod\plugins\is_bms_fix_timelimit.smx
+    bms\addons\sourcemod\gamedata\bms_match.games.txt
+    bms\addons\sourcemod\translations\bms_match.phrases.txt
+    bms\addons\sourcemod\translations\fast_spawn.phrases.txt
+    bms\addons\sourcemod\translations\spawn_marker.phrases.txt
+
+  Restart the server (or change the map) after extracting.
+  解压后重启服务器,或换一次图。
+
+NOT INCLUDED / 不包含的配置
+  This archive deliberately does NOT overwrite your configuration.
+  The configuration files are separate release attachments:
+  本压缩包故意不覆盖你的配置。配置文件在 Release 里单独提供:
+
+    bms_match.cfg  ->  bms\addons\sourcemod\configs\
+    mapcycle_ffa.txt / mapcycle_tdm.txt
+                   ->  bms\cfg\
+    server_match.cfg / server_match_post.cfg
+                   ->  bms\cfg\
+
+MANUAL STEPS / 还需要手动做的
+  1. bms_match.cfg - set SourceTV "DownloadBase" to your own public
+     URL, or leave it empty if you have no FastDL.
+     bms_match.cfg 里的 SourceTV "DownloadBase" 要改成你自己的公网
+     地址;没有 FastDL 就留空 ""。
+  2. Disable SourceMod's stock nextmap.smx (move it to plugins\disabled\).
+     停用 SourceMod 自带的 nextmap.smx(移到 plugins\disabled\)。
+  3. is_weaponfx.smx only activates when "is_weaponfix_saddr" is set
+     explicitly in server.cfg.
+     is_weaponfx.smx 需要在 server.cfg 里显式设置 is_weaponfix_saddr
+     才会启用。
+
+FILES / 文件说明
+  BMAG.smx                 merged all-in-one plugin (35 modules)
+                           合并插件(35 个模块)
+  bms_rpgReloadFix.smx     RPG reload animation fix
+  bms_weapon_tauStuckFix.smx  tau stuck-weapon fix at low ammo
+  is_weaponfx.smx          weapon animation warm-up
+  is_bms_fix_timelimit.smx round time-limit fix
+  bms_match.games.txt      signature for CGameRules::SetState (required,
+                           do not rename)
+                           CGameRules::SetState 的签名(必需,文件名不能改)
+  *.phrases.txt            chat phrases (required)
+                           聊天短语(必需)
+
+REQUIREMENTS / 版本要求
+  Built against the Black Mesa server.dll of 2026-11-17
+  (md5 421fee309fdc22f3dc7b5207a4810c3e). The older build
+  (68278cc0...) is also supported through signature scanning.
+  按 2026-11-17 的 server.dll 构建(md5 421fee309fdc22f3dc7b5207a4810c3e),
+  旧版(68278cc0...) 也通过签名扫描兼容。
+
+SOURCE / 源码
+  https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins
+================================================================

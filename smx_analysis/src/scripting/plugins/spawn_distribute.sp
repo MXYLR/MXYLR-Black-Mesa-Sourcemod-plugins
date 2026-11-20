@@ -38,6 +38,40 @@
  * 也不回原点)。FindSpawn 四遍扫描: ①空闲且非上次点 → ②空闲(哪怕=上次点,
  * 宁可原地也不叠真人)→ ③非上次点(全满时保变化)→ ④只剩 1 点返回 0。
  */
+/*
+ * spawn_distribute.sp — even distribution across spawn points
+ *
+ * Root cause (reverse-engineered and confirmed on 2026-08-29, see smx_analysis/REVERSE_RESPAWN.md):
+ * BM 2026's native IsSpawnPointValid (vtable+0x138) is completely different from the HL2DM original:
+ *   1) The 3rd parameter (flag) is never read anywhere in the function ([ebp+0x10] has zero references) →
+ *      the two loops in EntSelectSpawnPoint (flag=1 / flag=0) are redundant;
+ *   2) The occupancy check changed from the original "other players within a 128-radius sphere" to a zero-length hull trace
+ *      UTIL_TraceHull(spot, spot, hullMin, hullMax, 0x201400b=MASK_PLAYERSOLID),
+ *      and hullMin==hullMax==the player's m_vecOrigin (degenerates to a point), so it almost always reports "free";
+ *   3) The "kill the occupying player to clear the spot" fallback gained an equality guard (skip TakeDamage when
+ *      the occupant and spawner are equal at [entity+0x18]+6), which under FFA (everyone team 0) always
+ *      holds → the clear-the-spot fallback is completely dead.
+ * Combined: everyone is thrown by native selection onto the same (first after random jump) spawn point → players stack;
+ * when native selection fails it doesn't even teleport → respawn in place.
+ *
+ * Fix: don't touch native selection; in the player_spawn event pick a "free" spawn point ourselves and
+ * TeleportEntity there. In CBasePlayer::Spawn() GetPlayerSpawnSpot (native
+ * SetLocalOrigin) runs first and the player_spawn event fires last, so teleporting here reliably
+ * overrides the native selection result.
+ *
+ * Second fix (2026-08-29): split the occupancy check into two layers ——
+ *   1) Time layer (for everyone): within spawn_distribute_cooldown seconds after a point is assigned it is not
+ *      assigned again, preventing "multiple players spawning at the same point in one tick".
+ *   2) Position layer (real players only): occupied if there is "another real player" within radius spawn_distribute_radius.
+ *      Bots are deliberately excluded here —— the previous implementation used "position check against all alive players", misjudging
+ *      "a stationary bot standing on a spawn point" as occupied; when the bot count ≈ the spawn point count, real players had only 1 "free" point →
+ *      every suicide landed in the same spot (user-observed). With bots excluded from the position check, real players can treat all
+ *      spawn points as free and cycle through them (cost: may spawn near a stationary bot, which is normal DM).
+ *      Real players still block each other, avoiding real-player stacking.
+ * Also add per-player g_iLastSpawn[] (last spawn point index) to guarantee two consecutive spawns are at different positions (even if the
+ * rotation is scrambled, it won't return to the origin). FindSpawn scans four passes: ①free and not the last point → ②free (even if = last point,
+ * prefer in place over stacking real players) → ③not the last point (guarantee a change when all full) → ④only 1 point left, return 0.
+ */
 
 #define MAX_SPAWNS 64
 
@@ -49,7 +83,9 @@ int   g_iSpawnCount;
 float g_vSpawnOrigin[MAX_SPAWNS][3];
 float g_vSpawnAngle[MAX_SPAWNS][3];
 float g_fUsedTime[MAX_SPAWNS];      // 每个复活点最后一次被分配的游戏时间
+// Last time each spawn point was assigned (game time)
 int   g_iLastSpawn[MAXPLAYERS + 1]; // 每个玩家上一次出生点索引(-1 = 无)
+// Each player's last spawn point index (-1 = none)
 int   g_iRoundRobin;
 
 public void OnPluginStart()
@@ -64,8 +100,11 @@ public void OnPluginStart()
 public void OnMapStart()
 {
 	// spawn_marker 已验证 OnMapStart 时 info_player_deathmatch 可直接枚举,
+	// spawn_marker verified that info_player_deathmatch can be enumerated directly at OnMapStart,
 	// 但 spawn_cap 遇到过一次地图实体尚未全部创建的情况, 故立即收集一次 +
+	// but spawn_cap once hit a case where map entities were not all created yet, so collect once immediately +
 	// 延迟 1 秒兜底重收(覆盖实体迟到/插件后加复活点的边角, 幂等)。
+	// recollect as a fallback 1 second later (covers late entities / plugins adding spawn points afterward; idempotent).
 	CollectSpawnPoints();
 	ResetState();
 	CreateTimer(1.0, Timer_Recollect, _, TIMER_FLAG_NO_MAPCHANGE);
@@ -74,7 +113,9 @@ public void OnMapStart()
 public Action Timer_Recollect(Handle timer)
 {
 	// 只重收实体, 不重置运行时状态: 否则会把开局 1 秒内已记录的
+	// Only recollect entities, do not reset runtime state: otherwise it would wipe the
 	// g_fUsedTime/g_iLastSpawn 清空, 冷却与"连续两次不同点"保证失效。
+	// g_fUsedTime/g_iLastSpawn recorded within the first second of the match, invalidating the cooldown and the "two consecutive different points" guarantee.
 	CollectSpawnPoints();
 	return Plugin_Continue;
 }
@@ -95,6 +136,7 @@ void ResetState()
 public void OnClientPutInServer(int client)
 {
 	// 新玩家复用已断开玩家的客户端槽位时, 清掉残留的"上次出生点"索引
+	// When a new player reuses a disconnected player's client slot, clear the leftover "last spawn point" index
 	g_iLastSpawn[client] = -1;
 }
 
@@ -118,6 +160,7 @@ void CollectSpawnPoints()
 	}
 
 	// 没有 deathmatch 复活点就退回 info_player_start
+	// Fall back to info_player_start if there are no deathmatch spawn points
 	if (g_iSpawnCount == 0)
 	{
 		ent = -1;
@@ -151,6 +194,7 @@ public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadca
 	}
 
 	// 观战者(team 1)没有 deathmatch 复活点, 不干预; 也不干预非存活状态
+	// Spectators (team 1) have no deathmatch spawn point, so don't interfere; also don't interfere with non-alive states
 	if (!IsPlayerAlive(client) || GetClientTeam(client) == 1)
 	{
 		return Plugin_Continue;
@@ -175,6 +219,7 @@ int FindSpawn(int client)
 	int last = g_iLastSpawn[client];
 
 	// 1) 最佳: 空闲 且 非上次出生点
+	// 1) Best: free and not the last spawn point
 	for (int i = 0; i < g_iSpawnCount; i++)
 	{
 		int idx = (g_iRoundRobin + i) % g_iSpawnCount;
@@ -185,6 +230,7 @@ int FindSpawn(int client)
 	}
 
 	// 2) 次优: 空闲(哪怕=上次点)—— 宁可原地, 也不叠真人
+	// 2) Next best: free (even if = last point) —— prefer in place over stacking real players
 	for (int i = 0; i < g_iSpawnCount; i++)
 	{
 		int idx = (g_iRoundRobin + i) % g_iSpawnCount;
@@ -195,6 +241,7 @@ int FindSpawn(int client)
 	}
 
 	// 3) 兜底: 非上次出生点(哪怕被占用)—— 全满时保证位置变化
+	// 3) Fallback: not the last spawn point (even if occupied) —— guarantee a position change when all are full
 	for (int i = 0; i < g_iSpawnCount; i++)
 	{
 		int idx = (g_iRoundRobin + i) % g_iSpawnCount;
@@ -205,6 +252,7 @@ int FindSpawn(int client)
 	}
 
 	// 4) 只剩 1 个复活点: 无解
+	// 4) Only 1 spawn point left: no solution
 	return 0;
 }
 
@@ -219,13 +267,16 @@ bool IsSpawnFree(int idx, int excludeClient)
 	}
 
 	// 时间层(对所有人): 最近被分配过(cooldown 内)→ 占用
+	// Time layer (for everyone): assigned recently (within cooldown) → occupied
 	if (now - g_fUsedTime[idx] < cooldown)
 	{
 		return false;
 	}
 
 	// 位置层(只对真人): 半径内有"其他真人"→ 占用。bot 不参与, 避免静止 bot
+	// Position layer (real players only): "another real player" within radius → occupied. Bots are excluded, to prevent a stationary bot
 	// 永久霸占复活点。
+	// from permanently hogging a spawn point.
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		if (i == excludeClient)

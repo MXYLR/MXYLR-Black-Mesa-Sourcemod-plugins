@@ -1,11 +1,18 @@
 ; mapcycle_ffa.txt - FFA 模式地图列表(bms_match 比赛插件)
 ; 每行一个地图名;以 ; 或 / 开头的行会被忽略
 ; 服务器 bms/maps 目录的 12 张官方 DM 图,按喜好删减即可
+; mapcycle_ffa.txt - FFA mode map list (bms_match match plugin)
+; One map name per line; lines starting with ; or / are ignored
+; The 12 official DM maps in the server's bms/maps directory; trim as you like
 ;
 ; >>> 部署前检查:名单里的地图必须真的存在于你服务器的 bms/maps/ 下,
 ;     否则玩家投到这张图时服务器会换图失败。没有的图请直接删掉对应行。
 ; >>> 增删图之后记得同步 smx_analysis/src/scripting/configs/bms_match.cfg
 ;     的 Maps/Abbreviations(简称)和 Gamemodes/ffa/Defaultmap(默认图)。
+; >>> Pre-deployment check: every map in this list must actually exist under your server's bms/maps/,
+;     otherwise the server will fail to change maps when players vote for that map. Delete the line for any missing map.
+; >>> After adding/removing maps, remember to sync smx_analysis/src/scripting/configs/bms_match.cfg
+;     Maps/Abbreviations(abbreviations) and Gamemodes/ffa/Defaultmap(default map).
 dm_boom
 dm_bounce
 dm_chopper

@@ -119,6 +119,124 @@
  *     伤害（钩子名 / hook 时血量 / 伤害 / 类型 / fall 位 / inflictor 类名 / attacker）
  *     和 player_death 写进 SM 日志。排查「摔死了」这类问题先开它。
  */
+/*
+ * tau_mp.smx — a few tweaks for the singleplayer campaign:
+ *   1. the tau cannon gets its "multiplayer mode" behavior:
+ *        tau_mp_gaussjump  1 = gauss jump (patches FireBeam)
+ *        tau_mp_nocooldown 1 = no secondary cooldown (patches ChargeFire) —— ⚠ root cause of the weapon-stuck bug unproven, see below
+ *   2. fall damage capped at 10 HP
+ *
+ * ⚠ 2026-10-04 unresolved: after NOP-ing the je in ChargeFire, testing produced
+ *   "hold secondary a few shots → tau cannon model disappears → reloading the save brings the model back but the HUD is gone, cannot fire, cannot switch weapons".
+ *   Reverse engineering found only one difference: the SP branch writes two state timers
+ *     call 0x1048fa80(0xB5, 0.0f)  → SendWeaponAnim first; only on success write this+0x49c and this+0x4a0
+ *   the MP branch only does
+ *     SendWeaponAnim(0xB5) + 0x1048fc50(curtime, 0) → only writes this+0x4a0
+ *   (0x10108010 and vtable+0x400 are the same function, verified; not an override difference.)
+ *   So: taking the MP branch = skipping the SP "post-attack cooldown" state machine, and making the secondary cooldown always equal curtime.
+ *   Thus holding secondary re-enters ChargeFire every tick. **Whether this is really the cause is not yet proven.**
+ *
+ *   ⚠ Correction (2026-10-04 disassembly re-check): the earlier note that "bms_weapon_tauStuckFix.smx depends on the deleted
+ *   m_bInTauAttack → silently fails → no fallback" is **wrong**. That plugin only reads
+ *   CBasePlayer/m_iAmmo and CBaseCombatWeapon/m_iPrimaryAmmoType, both of which still exist in the modern server.dll
+ *   and both classes are still registered as ServerClass → **the plugin is alive**. Its entire behavior =
+ *   on the first tick of secondary while holding weapon_tau, top up spare ammo to 3,
+ *   **does not touch viewmodel/HUD/weapon state**, and is not the culprit for the model/HUD disappearing.
+ *   However it is coupled with nocooldown: nocooldown makes spare ammo drain fast, repeatedly pushing the player into
+ *   the "spare ammo < 3" regime, i.e. the first time this 2018 plugin gets triggered at high frequency.
+ *   → when reproducing/troubleshooting the weapon-stuck bug, it is recommended to also rename bms_weapon_tauStuckFix.smx to disable it, and test both together.
+ *
+ *   ⚠ The other "the game crashed" episode (2026-10-04) has been traced to be **unrelated to tau**: nocooldown was off at the time,
+ *   the culprit was the glyph path of the custom-crosshair client mod (that mod is now fully uninstalled).
+ *   On trouble, set tau_mp_nocooldown 0 (changing the cvar auto-restores the original bytes, no restart needed).
+ *
+ * Background (reverse-engineering conclusions, see smx_analysis/REVERSE_TAU.md):
+ *   BM singleplayer/multiplayer share the same server.dll; the difference = cfg (skill.cfg vs
+ *   config_deathmatch.cfg) + the IsMultiplayer branch in the code.
+ *   tau has only two such branches, and both look like
+ *        mov ecx,[g_pGameRules] ; mov eax,[ecx] ; mov eax,[eax+0x88] ; call eax
+ *   then test al,al / je <singleplayer path>:
+ *
+ *   ⚠ Address versions: below, each is written as two sets "new build (old build)".
+ *      new build = md5 421fee309fdc22f3dc7b5207a4810c3e (after the 2026-11-17 Steam update,
+ *                 what the singleplayer campaign runs)
+ *      old build = md5 68278cc0c3a1e23d96c2b9d722ae7670 (the one on the F:/BMServer deathmatch server,
+ *                 a separate install, not updated by Steam)
+ *      The branch structure of both versions is identical; both gamedata signatures hit each version uniquely
+ *      → the plugin needs no per-version branching; GameConfGetAddress lands on the correct spot by itself.
+ *
+ *   1. CWeapon_Tau::FireBeam @0x1048DDA0 (old 0x1048C780), je @0x1048DEF8 (old 0x1048C8D8)
+ *      → 0x1048DFDC (old 0x1048C9BC)
+ *      The SP path at 0x1048E038 (old 0x1048CA18) executes `mov dword ptr [ebp-0x18], 0`
+ *      zeroing the vertical component of the knockback
+ *      → the SP "gauss jump" is disabled at the code level; a pure ConVar change cannot produce it.
+ *      The MP path keeps the three-axis knockback = gauss jump. This segment only computes a velocity impulse
+ *      (after the merge, call 0x1011D8D0, old 0x1011D7E0); it does not touch viewmodel / HUD / weapon state, low risk.
+ *
+ *   2. CWeapon_Tau::ChargeFire @0x1048ED00 (old 0x1048D6E0), je @0x1048EE60 (old 0x1048D840)
+ *      → 0x1048EE99 (old 0x1048D879)
+ *      The SP path sets the secondary cooldown to "curtime + fire animation duration" → after firing the secondary there is a recovery delay;
+ *      the MP path only does SendWeaponAnim(0xB5) + secondary cooldown = curtime → can fire again immediately.
+ *      **This is suspected to be related to the weapon-stuck bug, not yet proven** (see the 2026-10-04 notes above).
+ *
+ * Approach:
+ *   Use the signatures in gamedata to get the runtime addresses of these two je instructions (see tau_mp.games.txt),
+ *   verify the first byte, then overwrite the je in place with NOP —— memory only, nothing written to disk, cfg unchanged.
+ *   So the engine always takes the "multiplayer path" at these two spots, and the behavior is the engine's own MP code,
+ *   not an approximation of the physics/cooldown rewritten by the plugin. The plugin restores the original bytes when unloaded.
+ *
+ *   ⚠ The signature must be relocation-safe: GameConfGetAddress scans the **loaded** module, and absolute-address instructions'
+ *   imm32 gets rewritten on load. The FireBeam je is immediately followed by `cmp ecx, <ConVar static object>`
+ *   (new build 0x110FB5E0 / old build 0x110FA098); its imm32
+ *   must be wildcarded as \x2A —— v1.1.0 missed this, so it matched on disk but mismatched at runtime, and the gauss jump therefore did not take effect
+ *   (log "cannot find TauFireBeamMPBranch"). Verify with smx_analysis/sig_check.py.
+ *
+ *   The other route (hooking CMultiplayRules::IsMultiplayer as a gamerules hook) does not work under BM singleplayer:
+ *   DHooks' HookGamerules relies on the GameRulesProxy key in the sdktools gamedata, which says
+ *   CBM_MP_GameRulesProxy, while the singleplayer campaign uses CBM_SP_GameRulesProxy → cannot get the gamerules
+ *   pointer, reports "Could not get gamerules pointer". This plugin therefore does not depend on DHooks at all.
+ *
+ * Also pin the three tau parameter ConVars to their multiplayer native values (the singleplayer skill.cfg writes the singleplayer values):
+ *   sk_weapon_tau_charge_max_velocity        650 → 850
+ *   sk_weapon_tau_full_charge_time           1.5 → 1.25
+ *   sk_weapon_tau_full_charge_required_ammo   12 → 11
+ *   (sk_weapon_tau_beam_charged_dmg is 120 in both singleplayer and multiplayer; no change needed)
+ *
+ * Fall damage:
+ *   BM computes fall damage in CGameMovement (function 0x101D2DE0, old 0x101D1FA0):
+ *       damage = sv_falldamagescale × gamerules->FlPlayerFallDamage(player)
+ *       if damage <= 0, skip directly; otherwise construct CTakeDamageInfo(..., DMG_FALL) and call player->TakeDamage()
+ *   i.e. fall damage shares the same TakeDamage pipeline as normal damage, carrying the DMG_FALL(0x20) flag.
+ *   The chain was verified byte by byte: TakeDamage (new 0x1011C290 / old 0x1011C1A0) at
+ *   0x1011C48C (old 0x1011C39C) virtually dispatches vtable+0x110,
+ *   and the windows offset of OnTakeDamage in sdkhooks.games/game.bms.txt is exactly 68 = 0x110
+ *   → the SDKHooks OnTakeDamage hook really can intercept fall damage and cap it.
+ *   sv_falldamagescale is only a multiplier (0 = no damage); it cannot express "cap at N HP", so the damage must be hooked.
+ *   Note the engine does not call TakeDamage at all when damage <= 0 —— a light fall that is insufficient to lose HP is still 0 damage,
+ *   and here we **only cap, never raise**: a light fall that originally did 2 points still does 2; only those above the cap are pushed down to
+ *   tau_mp_falldamage_hp. That is, "however you fall, at most N HP lost", not "any fall loses N HP".
+ *
+ * ✅ 2026-10-04 empirically proven (v1.3.3): the cap takes effect on each fall, the chain matches the inference above exactly; no need to doubt the code anymore.
+ *   Log of 5 consecutive falls on bm_c2a5a (hp = health when the hook fires, before HP is deducted):
+ *     hp=91 dmg=46.72 type=0x20 fall=1 -> capped 46.72 -> 10.00  -> 81
+ *     hp=81 dmg=63.61 type=0x20 fall=1 -> capped 63.61 -> 10.00  -> 71
+ *     hp=71 dmg= 6.51 type=0x20 fall=1 -> did not exceed cap, deduct 6.51    -> 64
+ *     hp=64 dmg=36.08 type=0x20 fall=1 -> capped 36.08 -> 10.00  -> 54
+ *     hp=54 dmg=50.17 type=0x20 fall=1 -> capped 50.17 -> 10.00  -> 44
+ *   Each time exactly 10 (or the original value), no player_death throughout. What OnTakeDamageAlive receives is the **already-capped**
+ *   10.00 → the two chains share the same CTakeDamageInfo; capping is idempotent and does not stack.
+ *   ⇒ "dying from a high fall" is not a cap failure. If it recurs, first look at the type on the [OnTakeDamage] line:
+ *   **only DMG_FALL(0x20) enters the cap**; pit trigger_hurt with DMG_GENERIC and explosive self-damage are not handled
+ *   (the user has confirmed grenade self-damage is normal damage and need not be capped).
+ *
+ * New in v1.3.2/1.3.3:
+ *   - OnMapStart, on the next frame, re-hooks all in-game clients. Map change / save reload rebuilds entities, and SDKHooks'
+ *     entity hook is cleared with them, while the listen server's local player does not necessarily fire
+ *     OnClientPutInServer again —— if you only hook that one place, after a save reload the cap **silently fails**.
+ *   - tau_mp_damagelog (default 0): diagnostic switch. 1 = write every fall, and any damage that reaches a lethal amount
+ *     (hook name / health at hook time / damage / type / fall bit / inflictor classname / attacker)
+ *     and player_death to the SM log. Turn it on first when troubleshooting issues like "died from a fall".
+ */
 
 #include <sourcemod>
 #include <sdkhooks>
@@ -126,6 +244,7 @@
 #define PLUGIN_VERSION "1.3.4"
 
 // 多人原生数值 / 单人默认值（cfg/skill.cfg vs cfg/config_deathmatch.cfg）
+// Multiplayer native values / singleplayer defaults (cfg/skill.cfg vs cfg/config_deathmatch.cfg)
 #define TAU_MP_CHARGE_MAX_VELOCITY   850.0
 #define TAU_SP_CHARGE_MAX_VELOCITY   650.0
 #define TAU_MP_FULL_CHARGE_TIME      1.25
@@ -137,7 +256,9 @@
 #define PATCH_MAX_BYTES    6
 
 // 换图/读档后的补挂窗口: 每秒扫一次, 共扫这么多秒。读档时本地玩家要过几秒才
+// Re-hook window after map change / save reload: scan once per second, for this many seconds. On a save reload the local player takes a few seconds before it
 // 算 "in game", 而它不会触发 OnClientPutInServer, 所以必须守一段时间。
+// counts as "in game", and it does not fire OnClientPutInServer, so we must keep watching for a while.
 #define REHOOK_TRIES       60
 
 Handle g_hConf;
@@ -157,6 +278,7 @@ static const char g_sPatchKey[PATCH_COUNT][] =
 };
 
 // 期望的首字节：0F 84 (je rel32) / 74 xx (je rel8)
+// Expected first bytes: 0F 84 (je rel32) / 74 xx (je rel8)
 static const int g_iPatchHead[PATCH_COUNT] = { 0x0F, 0x74 };
 static const int g_iPatchLen[PATCH_COUNT]  = { 6,    2    };
 
@@ -212,6 +334,7 @@ public void OnPluginStart()
 public void OnConfigsExecuted()
 {
 	// skill.cfg / server.cfg 都执行完了，这时再钉值才不会被覆盖回来
+	// skill.cfg / server.cfg have all executed; only pinning values now keeps them from being overwritten back
 	ApplyAll();
 
 	LogMessage("tau_mp: state enable=%d hook=%d gaussjump=%d nocooldown=%d values=%d falldamage=%d cap=%.1f log=%d",
@@ -242,15 +365,19 @@ void ApplyAll()
 }
 
 // ---------------------------------------------------------------- 代码分支
+// ---------------------------------------------------------------- code branches
 
 // Address 是 enum tag，直接相加会退化成 int（warning 213），这里统一走一层转换
+// Address is an enum tag; adding it directly degrades to int (warning 213), so route it through one conversion layer here
 Address AddrAdd(Address base, int offset)
 {
 	return view_as<Address>(view_as<int>(base) + offset);
 }
 
 // 每处补丁有独立开关：0 = FireBeam(高斯跳) / 1 = ChargeFire(右键无冷却)。
+// Each patch has its own switch: 0 = FireBeam (gauss jump) / 1 = ChargeFire (no secondary cooldown).
 // 分开是为了能单独关掉一条来定位问题（2026-10-04 的卡枪事故见文件头）。
+// Splitting them lets you turn off one to isolate a problem (see the file header for the 2026-10-04 weapon-stuck incident).
 bool PatchWanted(int i)
 {
 	if (!g_cvEnable.BoolValue || !g_cvHook.BoolValue)
@@ -290,6 +417,7 @@ void TryPatch(int i)
 	if (head == 0x90)
 	{
 		// 已经是 NOP（例如插件重载、补丁仍在）：无需备份，避免把 NOP 当原字节记下来
+		// Already NOP (e.g. plugin reload, patch still in place): no backup needed, to avoid recording the NOP as the original bytes
 		g_aPatch[i] = addr;
 		g_bPatched[i] = true;
 		return;
@@ -358,6 +486,7 @@ void WriteNops(Address addr, int len)
 }
 
 // ---------------------------------------------------------------- 参数
+// ---------------------------------------------------------------- parameters
 
 void ApplyValues()
 {
@@ -378,14 +507,22 @@ void SetTauFloat(const char[] name, float value)
 }
 
 // ---------------------------------------------------------------- 跌落伤害
+// ---------------------------------------------------------------- fall damage
 
 // 换图/读档会重建玩家实体, SDKHooks 的 entity hook 随之被清掉, 而 listen server
+// Map change / save reload rebuilds player entities, SDKHooks' entity hook is cleared with them, and the listen server
 // 的本地玩家**不一定**会再触发一次 OnClientPutInServer —— 实测读档时基本都不触发。
+// local player does **not necessarily** fire OnClientPutInServer again —— in tests it basically never fires on save reload.
 // 更麻烦的是 OnMapStart 的当帧/次帧客户端常常还没 "in game": 2026-10-04 的日志里,
+// Worse, at OnMapStart the clients on the current/next frame often are not "in game" yet: in the 2026-10-04 logs,
 // 原本"下一帧补挂一次"的写法在读档后只打印 "re-hooked 0 in-game client(s)", 此后再无
+// the old "re-hook once on the next frame" approach printed only "re-hooked 0 in-game client(s)" after a save reload, with no further
 // 挂载记录, 于是封顶静默失效 —— 用户实测「读档后跌落伤害变回原版」。
+// hook records afterwards, so the cap silently failed —— the user reproduced "after reloading a save the fall damage reverts to the original".
 // 所以改成开一个窗口, 每秒扫一遍, 谁进游戏就给谁补挂。SDKHook 对同一 (entity, type)
+// So instead open a window and scan once per second, re-hooking whoever comes into the game. For the same (entity, type) SDKHook
 // 是覆盖语义 → 重复调用幂等, 不会叠加回调。
+// has overwrite semantics → repeated calls are idempotent and do not stack callbacks.
 public void OnMapStart()
 {
 	RehookInGameClients();
@@ -451,7 +588,9 @@ public void OnClientDisconnect(int client)
 }
 
 // 诊断: 记录每一次「摔伤」或「可能有杀伤力」的伤害, 以及封顶动作本身。
+// Diagnostics: log every "fall" or "potentially lethal" damage, plus the capping action itself.
 // 目的是回答: 摔伤到达 OnTakeDamage 了吗? 伤害/类型/当时血量是多少? 封顶执行了吗?
+// The goal is to answer: did the fall damage reach OnTakeDamage? what were the damage/type/health at the time? was the cap applied?
 void LogDamage(const char[] hookName, int victim, int attacker, int inflictor, float damage, int damagetype)
 {
 	if (!g_cvDamageLog.BoolValue)
@@ -507,8 +646,11 @@ public Action OnPlayerTakeDamage(int victim, int &attacker, int &inflictor, floa
 }
 
 // OnTakeDamage 与 OnTakeDamageAlive 是两条独立的 SDKHooks 链; 两条都试, 谁先接住谁生效
+// OnTakeDamage and OnTakeDamageAlive are two independent SDKHooks chains; try both, whichever catches it first wins
 // (封顶是幂等的, 不会叠成 0)。这同时是诊断手段: 若只有 Alive 那条打印, 说明血伤在
+// (capping is idempotent, it will not stack down to 0). This is also a diagnostic: if only the Alive one prints, it means the damage was
 // OnTakeDamage 之后被引擎重新处理过, 只挂 OnTakeDamage 就会漏掉摔伤。
+// reprocessed by the engine after OnTakeDamage, so hooking only OnTakeDamage would miss fall damage.
 public Action OnPlayerTakeDamageAlive(int victim, int &attacker, int &inflictor, float &damage, int &damagetype)
 {
 	if (damage <= 0.0 || !(damagetype & DMG_FALL))

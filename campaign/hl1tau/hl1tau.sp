@@ -32,6 +32,37 @@
  *     HL1 是「伤害−=墙厚」。这一项需拦截原生伤害才能还原，本插件不做。
  *   - 过载/弹药/击退均不动。
  */
+/*
+ * hl1tau.smx — HL1 gauss full-charge damage + splash radius + wall-penetration threshold restore (minimal plugin)
+ *
+ * BM's native weapon_tau has three values rewritten; this plugin only changes the native ConVars
+ * that are read live before firing, and does not intercept native firing (prediction/sounds/effects/damage/bots all go through BM's native logic):
+ *
+ *  1. Full-charge damage: BM sk_weapon_tau_beam_charged_dmg=120, HL1=200.
+ *     → Set to 200 on startup/map change (penetration depth/splash radius/hit damage all derive from it).
+ *  2. Splash radius: BM fixed sk_weapon_tau_beam_dmg_radius(64), HL1 dynamic = damage×2.5.
+ *     → Before firing set dmg_radius = charged_dmg × (t/charge_time) × hl1tau_splash_scale.
+ *  3. Wall-penetration threshold: BM fixed sk_weapon_tau_beam_penetration_depth(48), HL1 = damage value
+ *     (penetrates only when wall thickness < damage). → Before firing set penetration_depth = current damage value.
+ *
+ *   - Primary attack: dmg_radius=0, penetration_depth=0 (HL1 primary attack neither splashes nor penetrates)
+ *   - Secondary attack (release charge): dmg_radius=damage×scale, penetration_depth=damage
+ *
+ * Why a "global ConVar" has no race condition across multiple human players:
+ *   The engine runs each player's complete command serially — PhysicsSimulate → PlayerRunCommand
+ *   (SourceMod's OnPlayerRunCmd hook point) → RunCommand → RunPostThink
+ *   → PostThink → ItemPostFrame (native firing). Firing happens inside this same PlayerRunCommand
+ *   call and immediately after OnPlayerRunCmd; the next player's command only starts after the
+ *   previous player's whole command (including firing) has finished. So "change ConVar → fire" is naturally isolated per player, i.e. already per-player effective.
+ *
+ * Known limitations:
+ *   - Bots bypass OnPlayerRunCmd (BM calls PlayerRunCommand directly) → bot fire reads the ConVar value
+ *     left behind by the most recent human player (neither the native default nor the bot's own dynamic value).
+ *   - Only restores "full-charge damage + splash radius + wall-penetration threshold (how thick a wall can be penetrated)"; **post-penetration damage reduction cannot be restored**:
+ *     BM's post-penetration damage is not reduced at all (penetration_bias is a dead ConVar, zero references in the penetration logic),
+ *     whereas HL1 does "damage -= wall thickness". Restoring this needs native damage interception, which this plugin does not do.
+ *   - Overload/ammo/knockback are all left untouched.
+ */
 
 #include <sourcemod>
 #include <sdktools>
@@ -68,6 +99,7 @@ public void OnPluginStart()
 	AutoExecConfig(true, "hl1tau");
 
 	// 满蓄伤害钉到 HL1 的 200（BM 默认 120），穿墙深度/溅射/命中伤害都基于它
+	// Pin full-charge damage to HL1's 200 (BM default 120); penetration depth/splash/hit damage all derive from it
 	SetNativeChargedDmg(g_cvEnable.BoolValue ? 200.0 : 120.0);
 
 	for (int i = 1; i <= MaxClients; i++)
@@ -77,6 +109,7 @@ public void OnPluginStart()
 }
 
 // 换图后 server.cfg 可能重执行，重新钉回 200（或禁用时回到 120）
+// server.cfg may re-execute after a map change; pin it back to 200 (or back to 120 when disabled)
 public void OnMapStart()
 {
 	SetNativeChargedDmg(g_cvEnable.BoolValue ? 200.0 : 120.0);
@@ -95,6 +128,7 @@ void HL1_Reset(int client)
 }
 
 // 读取原生 ConVar 当前值，失败返回默认
+// Read the native ConVar's current value; return the default on failure
 float NativeConvarFloat(const char[] name, float def)
 {
 	ConVar c = FindConVar(name);
@@ -102,6 +136,7 @@ float NativeConvarFloat(const char[] name, float def)
 }
 
 // 写入原生溅射半径 ConVar（运行期实时生效）
+// Write the native splash-radius ConVar (takes effect live at runtime)
 void SetNativeSplashRadius(float radius)
 {
 	ConVar c = FindConVar("sk_weapon_tau_beam_dmg_radius");
@@ -113,6 +148,8 @@ void SetNativeSplashRadius(float radius)
 
 // 写入原生穿墙深度 ConVar（运行期实时生效）。HL1 门槛 =「墙厚 < 伤害」，
 // 故把 depth 设成当前伤害值；主攻设 0（HL1 主攻不穿墙）。
+// Write the native penetration-depth ConVar (takes effect live at runtime). HL1 threshold = "wall thickness < damage",
+// so set depth to the current damage value; set 0 for the primary attack (HL1 primary attack does not penetrate).
 void SetNativePenetrationDepth(float depth)
 {
 	ConVar c = FindConVar("sk_weapon_tau_beam_penetration_depth");
@@ -124,6 +161,8 @@ void SetNativePenetrationDepth(float depth)
 
 // 写入原生满蓄伤害 ConVar（开火时实时读，运行期可改）。
 // HL1 满蓄 200，BM 默认 120；穿墙深度/溅射半径/命中伤害都基于它，拉到 200 才对齐 HL1。
+// Write the native full-charge damage ConVar (read live when firing; changeable at runtime).
+// HL1 full charge is 200, BM default is 120; penetration depth/splash radius/hit damage all derive from it, so raise it to 200 to match HL1.
 void SetNativeChargedDmg(float dmg)
 {
 	ConVar c = FindConVar("sk_weapon_tau_beam_charged_dmg");
@@ -148,6 +187,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 	}
 
 	// 仅接管 weapon_tau
+	// Only take over weapon_tau
 	int activeWeapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
 	if (activeWeapon == -1)
 	{
@@ -170,6 +210,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 	bool bPrevAttack2 = (prev & IN_ATTACK2) != 0;
 
 	// 副攻：按下开始蓄力
+	// Secondary attack: pressing the button starts charging
 	if (bAttack2 && !bPrevAttack2)
 	{
 		g_bCharging[client] = true;
@@ -177,6 +218,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 	}
 
 	// 副攻：松开开火 -> 计算 HL1 动态溅射半径
+	// Secondary attack: release to fire -> compute the HL1 dynamic splash radius
 	if (!bAttack2 && bPrevAttack2 && g_bCharging[client])
 	{
 		float chargeTime = NativeConvarFloat("sk_weapon_tau_full_charge_time", 1.5);
@@ -207,6 +249,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 	}
 
 	// 主攻：HL1 无有效溅射、不穿墙 -> 0
+	// Primary attack: HL1 has no effective splash and no penetration -> 0
 	if (bAttack && !bAttack2 && !g_bCharging[client])
 	{
 		SetNativeSplashRadius(0.0);
@@ -218,4 +261,5 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 
 	g_iPrevButtons[client] = buttons;
 	return Plugin_Continue;   // 不抑制原生开火，原生伤害/特效照旧
+	// Do not suppress native firing; native damage/effects stay as before
 }

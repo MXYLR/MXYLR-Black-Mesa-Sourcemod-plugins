@@ -45,6 +45,26 @@ evidence dumps, the old delivery package and `campaign/` are all committed.
 
 ## Download
 
+### Drop-in zips (recommended)
+
+Install **SourceMod + MetaMod:Source** for Black Mesa first, then extract the zip
+for the project you want into your **Black Mesa folder** (the one that contains
+`bms\`). The three projects are independent — grab only what you need:
+
+| Project | Download | For |
+|---|---|---|
+| **BMAG** — deathmatch server pack (35 modules merged + 4 third-party plugins) | [`BMAG.zip`](https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins/releases/latest/download/BMAG.zip) | deathmatch servers |
+| **tau_mp** — campaign tau: gauss jump / no secondary cooldown / fall-damage cap | [`tau_mp.zip`](https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins/releases/latest/download/tau_mp.zip) | single-player campaign |
+| **hl1tau** — restores HL1 charged damage, splash radius and penetration threshold | [`hl1tau.zip`](https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins/releases/latest/download/hl1tau.zip) | single-player or deathmatch |
+
+Each zip contains a `bms/addons/sourcemod/…` tree plus a bilingual `README.txt`
+(prerequisites, where to extract, and what still has to be set up by hand).
+**BMAG.zip deliberately ships no configuration files**, so it will not overwrite
+your existing `bms_match.cfg` or map cycles — those are separate release
+attachments, listed below.
+
+### Individual files
+
 Each release corresponds to one commit, and its attachments are that build's artifacts:
 
 | Attachment | Where it goes |

@@ -1,0 +1,67 @@
+================================================================
+ tau_mp - multiplayer tau behaviour for the single-player campaign
+ tau_mp - 让单人战役的 tau 炮拥有多人模式行为
+================================================================
+
+PREREQUISITES / 前置条件
+  SourceMod and MetaMod:Source must already be installed for
+  Black Mesa in the same folder.
+  同一个 Black Mesa 安装里必须已经装好 SourceMod 与 MetaMod:Source。
+
+INSTALL / 安装
+  Extract this archive into your Black Mesa folder - the folder
+  that contains "bms\" (for example
+  ...\steamapps\common\Black Mesa\).
+  把压缩包解压到 Black Mesa 文件夹 —— 包含 "bms\" 的那一层。
+
+    bms\addons\sourcemod\plugins\tau_mp.smx
+    bms\addons\sourcemod\gamedata\tau_mp.games.txt
+
+  Restart the game after extracting.
+  解压后重启游戏。
+
+WHAT IT DOES / 功能
+  In the campaign the tau cannon is a cut-down version: no gauss
+  jump, and the secondary has a fixed cooldown. Both behaviours are
+  hard-coded in server.dll and branch on IsMultiplayer(), so no
+  ConVar can change them. This plugin patches the two branch sites
+  in memory and also caps fall damage.
+  单人战役里的 tau 是阉割版:没有高斯跳、副攻有硬直。两条都写死在
+  server.dll 里按 IsMultiplayer() 分支,改 ConVar 改不出来。本插件
+  在内存里抹掉这两处分支,并把跌落伤害封顶。
+
+CONVARS / 控制台变量
+  tau_mp_enable            1  master switch / 总开关
+  tau_mp_hook              1  both tau memory patches / 两处 tau 补丁
+  tau_mp_gaussjump         1  gauss jump / 高斯跳
+  tau_mp_nocooldown        1  no secondary cooldown / 副攻无冷却
+  tau_mp_values            1  pin tau ConVars to MP values /
+                             把 tau 参数 ConVar 固定成多人值
+  tau_mp_falldamage        1  cap fall damage / 跌落伤害封顶
+  tau_mp_falldamage_hp    10.0  fall damage cap, HP / 单次跌落伤害上限
+  tau_mp_damagelog         0  diagnostics log / 诊断日志
+
+  Setting tau_mp_nocooldown 0 restores the original bytes at runtime -
+  no restart needed.
+  把 tau_mp_nocooldown 设为 0 会在运行时还原原始字节,不用重启。
+
+KNOWN ISSUE / 已知问题
+  With nocooldown enabled, holding the secondary button re-enters
+  ChargeFire every tick. Whether this is what caused earlier
+  "tau model / HUD disappears" reports is not confirmed; the
+  confirmed cause of that was a different plugin. See the source
+  header for the full investigation notes.
+  开无冷却后,按住副攻每个 tick 都会重入 ChargeFire。此前"tau 模型 /
+  HUD 消失"是否由它引起尚未实锤,已确认的元凶是另一个插件。完整
+  排查笔记见源码头部注释。
+
+REQUIREMENTS / 版本要求
+  Built against the Black Mesa server.dll of 2026-11-17
+  (md5 421fee309fdc22f3dc7b5207a4810c3e). The older build is also
+  supported - the gamedata signatures match both.
+  按 2026-11-17 的 server.dll 构建(md5 421fee309fdc22f3dc7b5207a4810c3e),
+  旧版同样支持 —— gamedata 签名两版都唯一命中。
+
+SOURCE / 源码
+  https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins
+================================================================

@@ -1,0 +1,53 @@
+================================================================
+ hl1tau - HL1 gauss behaviour for Black Mesa's tau cannon
+ hl1tau - 把 tau 炮还原成 HL1 高斯的数值
+================================================================
+
+PREREQUISITES / 前置条件
+  SourceMod and MetaMod:Source must already be installed for
+  Black Mesa in the same folder.
+  同一个 Black Mesa 安装里必须已经装好 SourceMod 与 MetaMod:Source。
+
+INSTALL / 安装
+  Extract this archive into your Black Mesa folder - the folder
+  that contains "bms\" (for example
+  ...\steamapps\common\Black Mesa\).
+  把压缩包解压到 Black Mesa 文件夹 —— 包含 "bms\" 的那一层。
+
+    bms\addons\sourcemod\plugins\hl1tau.smx
+
+  Restart the game (or change the map) after extracting.
+  解压后重启游戏,或换一次图。
+
+WHAT IT DOES / 功能
+  Black Mesa rewrote three tau values. This plugin only sets the
+  native ConVars that the weapon reads at fire time, before the
+  shot; it does not intercept firing.
+  BM 改写了 tau 的三处数值。本插件只在开火前设置原生 ConVar,
+  不拦截开火,预测/音效/特效/伤害/bot 全走原生逻辑。
+
+   1. Fully charged damage: BM 120 -> HL1 200.
+      满蓄伤害:BM 120 -> HL1 200。
+   2. Splash radius: BM fixed 64 -> HL1 damage x scale.
+      溅射半径:BM 固定 64 -> HL1 伤害 x 倍率。
+   3. Wall-penetration threshold: BM fixed 48 -> HL1 current damage.
+      穿墙门槛:BM 固定 48 -> HL1 当前伤害值。
+
+CONVARS / 控制台变量
+  hl1tau_enable         1     master switch / 总开关
+  hl1tau_splash_scale   2.5   radius = damage x scale.
+                              HL1 single-player = 2.5; for deathmatch
+                              set 1.75 (2.5 is the SP value).
+                              溅射半径 = 伤害 x 倍率。HL1 单机 = 2.5;
+                              联机死斗要把 2.5 设成 1.75。
+  hl1tau_penetration    1     restore HL1 wall-penetration threshold
+                              / 还原 HL1 穿墙门槛
+
+NOT RESTORED / 没有还原的部分
+  Wall penetration still deals full damage (HL1 subtracts the wall
+  thickness), and overcharge / ammo / knockback are untouched.
+  穿墙后仍然扣满伤害(HL1 是伤害减去墙厚),过载/弹药/击退都不动。
+
+SOURCE / 源码
+  https://github.com/MXYLR/MXYLR-Black-Mesa-Sourcemod-plugins
+================================================================

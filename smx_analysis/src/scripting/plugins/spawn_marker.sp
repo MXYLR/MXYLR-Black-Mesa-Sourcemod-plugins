@@ -19,6 +19,24 @@
  * 标记 = 红色垂直光柱 + 地面光圈 + 顶部辉光(临时实体,life 秒后消失)。
  * 另有 `sm_spawnmap` 全图出生点常显(练习记点位)。
  */
+/*
+ * spawn_marker.sp — training aid "conspicuous enemy respawn-point marker" (merged into BMAG)
+ *
+ * Module source is still kept separately; smx_analysis/merge.py compiles it into BMAG.smx (spawn_marker.phrases.txt
+ * must be deployed too, otherwise raw keys are shown); do not compile it into spawn_marker.smx separately,
+ * or it and BMAG will each register an sm_spawnmarker command.
+ *
+ * It only observes native respawns and never alters respawn logic (no DispatchSpawn / no team changes / no damage),
+ * so it does not affect match fairness. Disabled by default; admins enable it per use, for solo (vs bots) or duo (vs a partner) training.
+ *
+ * How it works: the native respawn chain player.cpp:5028 `CBasePlayer::Spawn` → `GetPlayerSpawnSpot`
+ * (i.e. EntSelectSpawnPoint picking an info_player_deathmatch) → fires the `player_spawn` event.
+ * In the event we read GetClientAbsOrigin(target) = the exact respawn point the engine finally chose, and draw the marker.
+ * Both real players and bots go through Spawn(), so both trigger player_spawn.
+ *
+ * Marker = red vertical beam + ground ring + top glow (temp entities, disappear after life seconds).
+ * Also `sm_spawnmap` persistently shows all spawn points on the map (for practising positions).
+ */
 
 #include <sourcemod>
 #include <sdktools>
@@ -30,18 +48,23 @@ ConVar g_cvLife;
 ConVar g_cvSpawnMap;
 
 int g_iTarget = -1;   // 显式目标 client index(-1 = 自动探测)
+// Explicit target client index (-1 = auto-detect)
 int g_iAdmin  = -1;   // 最近一次命令发起者(供"另一人类"自动探测)
+// Last command issuer (used for the "other human" auto-detect)
 
 int g_iBeamSprite = -1;
 int g_iHaloSprite = -1;
 int g_iGlowSprite = -1;
 
 int g_iSpawnPoints[512];  // info_player_deathmatch 的 EntRef
+// EntRef of info_player_deathmatch
 int g_iSpawnCount;
 Handle g_hSpawnMapTimer;
 
 static const int g_MarkerColor[4] = { 255, 64, 64, 255 };   // 红
+// Red
 static const int g_MapColor[4]    = { 80, 200, 255, 180 };  // 淡蓝(常显半透明)
+// Light blue (always shown, semi-transparent)
 
 public Plugin myinfo =
 {
@@ -73,6 +96,7 @@ public void OnMapStart()
 	PrecacheSprites();
 
 	// 换图:旧 timer 已被引擎杀死,旧 EntRef 全部失效
+	// Map change: the old timer was already killed by the engine, all old EntRefs are invalid
 	g_hSpawnMapTimer = null;
 	g_iSpawnCount = 0;
 	RefreshSpawnPoints();
@@ -92,16 +116,19 @@ public void OnClientDisconnect(int client)
 }
 
 // ---------------------------------------------------------------- 目标解析
+// ---------------------------------------------------------------- Target resolution
 
 int ResolveTarget()
 {
 	// 显式目标仍在线
+	// Explicit target is still in game
 	if (g_iTarget >= 1 && g_iTarget <= MaxClients && IsClientInGame(g_iTarget))
 	{
 		return g_iTarget;
 	}
 
 	// 自动:第一个 bot(单人训练)
+	// Auto: first bot (solo training)
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		if (IsClientInGame(i) && IsFakeClient(i))
@@ -111,6 +138,7 @@ int ResolveTarget()
 	}
 
 	// 自动:双人训练,取与命令发起者不同的那个人类
+	// Auto: duo training, take the human other than the command issuer
 	int admin = (g_iAdmin >= 1 && g_iAdmin <= MaxClients && IsClientInGame(g_iAdmin)) ? g_iAdmin : -1;
 	int humanCount = 0;
 	int otherHuman = -1;
@@ -146,6 +174,7 @@ int FirstBot()
 }
 
 // ---------------------------------------------------------------- 复活事件
+// ---------------------------------------------------------------- Respawn event
 
 public void Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast)
 {
@@ -175,6 +204,7 @@ public void Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast
 }
 
 // ---------------------------------------------------------------- 标记绘制
+// ---------------------------------------------------------------- Marker drawing
 
 void PrecacheSprites()
 {
@@ -209,6 +239,7 @@ void DrawMarker(float origin[3], const int color[4])
 	glow[0] = origin[0]; glow[1] = origin[1]; glow[2] = origin[2] + 48.0;
 
 	// 垂直光柱
+	// Vertical beam
 	if (g_iBeamSprite > 0)
 	{
 		TE_SetupBeamPoints(top, base, g_iBeamSprite, 0, 0, 0, life, 8.0, 8.0, 0, 0.0, color, 0);
@@ -216,6 +247,7 @@ void DrawMarker(float origin[3], const int color[4])
 	}
 
 	// 地面光圈
+	// Ground ring
 	if (g_iBeamSprite > 0 && g_iHaloSprite > 0)
 	{
 		TE_SetupBeamRingPoint(base, 10.0, 80.0, g_iBeamSprite, g_iHaloSprite, 0, 10, life, 10.0, 0.0, color, 10, 0);
@@ -223,6 +255,7 @@ void DrawMarker(float origin[3], const int color[4])
 	}
 
 	// 顶部辉光
+	// Top glow
 	if (g_iGlowSprite > 0)
 	{
 		TE_SetupGlowSprite(glow, g_iGlowSprite, life, 1.5, 255);
@@ -231,6 +264,7 @@ void DrawMarker(float origin[3], const int color[4])
 }
 
 // ---------------------------------------------------------------- 全图出生点常显
+// ---------------------------------------------------------------- Persistent spawn points across the map
 
 void RefreshSpawnPoints()
 {
@@ -307,6 +341,7 @@ void SetSpawnMap(bool on)
 }
 
 // ---------------------------------------------------------------- 命令
+// ---------------------------------------------------------------- Commands
 
 public Action Cmd_SpawnMarker(int client, int args)
 {
@@ -347,6 +382,7 @@ public Action Cmd_SpawnMarker(int client, int args)
 	}
 
 	// bot 别名(@bot/@bots 不是单目标 token,手动取第一个 bot)
+	// bot alias (@bot/@bots is not a single-target token, manually take the first bot)
 	if (StrEqual(arg, "bot", false) || StrEqual(arg, "@bot", false) || StrEqual(arg, "@bots", false))
 	{
 		int bot = FirstBot();
@@ -363,6 +399,7 @@ public Action Cmd_SpawnMarker(int client, int args)
 	}
 
 	// 按名字 / #userid 解析单个目标(允许 bot、允许死亡态)
+	// Resolve a single target by name / #userid (bots allowed, dead state allowed)
 	char target_name[MAX_TARGET_LENGTH];
 	int target_list[MAXPLAYERS];
 	int target_count;

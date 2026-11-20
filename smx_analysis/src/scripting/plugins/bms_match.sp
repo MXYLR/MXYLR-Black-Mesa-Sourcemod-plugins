@@ -209,70 +209,120 @@ char gBmsWebReply[MAXPLAYERS + 1][1024];
 bool gBmsWebCapturing[MAXPLAYERS + 1];
 
 // 状态页(bms_status_page)。2026-11-17 客户端更新后引擎不再画 HUD 顶部的
+// Status page (bms_status_page). After the 2026-11-17 client update the engine no longer draws the HUD top
 // 倒计时/状态文本, 于是本模块每秒重画一次。通道见 bms_status_channel:
+// countdown/state text, so this module redraws it once per second. See bms_status_channel for the transport:
 // 0 = 默认, hint 面板(位置由客户端 hudlayout.res 固定)。面板自身有底框动画,
+// 0 = default, hint panel (position fixed by the client's hudlayout.res). The panel has its own box animation,
 //     每收到一条消息就从头重播一次缩放, 1 Hz 重发看起来就是一直在闪 ——
+//     it replays the scale animation from the start on every message, so a 1 Hz resend looks like constant flicker —
 //     用户实机对比后要的就是这个多行的样子(bms_status_keyhint 1)。
+//     this multi-line look is exactly what the user wanted after comparing on the live server (bms_status_keyhint 1).
 // 1 = HudMsg(无底框、静音、每秒刷新也不闪, 但只有 6 个槽位),
+// 1 = HudMsg (no box, silent, no flicker even at a 1 Hz refresh, but only 6 slots),
 // 2 = 同样走 HudMsg, 只是把 K/D/ping + 前五名也压进那 6 行。
+// 2 = also HudMsg, just squeezing K/D/ping + top-5 into those 6 lines as well.
 //
 // hint 面板有两块, 由 bms_status_keyhint 选:
+// The hint panel has two variants, selected by bms_status_keyhint:
 // 1(默认) = KeyHintText / CHudHintKeyDisplay —— 多行正常(靠子面板 GetTall
+// 1 (default) = KeyHintText / CHudHintKeyDisplay — multi-line works (laid out via the sub-panel GetTall
 //   排版, 字体 HudHintTextSmall/Large/Glyph 都在), 但 hudanimations.txt 的
+//   layout; fonts HudHintTextSmall/Large/Glyph are all present), but hudanimations.txt's
 //   KeyHintMessageShow 第一步就是 HintSize "0" 再 2 秒涨回 "1", 同一份动画还在
+//   KeyHintMessageShow's first step is HintSize "0" then it grows back to "1" over 2 s; the same animation also
 //   0s/1.5s/3.0s 闪三次底框颜色, 12 秒后 Alpha 归零 —— 所以必须 1 Hz 重发,
+//   flashes the box colour three times at 0s/1.5s/3.0s, and Alpha reaches zero after 12 s — so it must be resent at 1 Hz,
 //   代价就是看得见的闪。
+//   at the cost of visible flicker.
 // 0 = HintText / CHudHintDisplay —— 就是原来 Show Health 用的那块细长条。
+// 0 = HintText / CHudHintDisplay — the thin long bar that Show Health used to use.
 //   天生静音不闪, 但客户端 clientscheme.res 里没有 "HudHintText" 字体 →
+//   silent and non-flickering by nature, but the client's clientscheme.res has no "HudHintText" font →
 //   GetFontTall 拿到 0, 多行会全叠在同一个 y 上, **只能单行**。用户对比后
+//   GetFontTall returns 0, so multi-line text all piles onto the same y, **single line only**. After comparing, the
 //   认为单行不如多行那条, 所以默认不选它(见 Bms_BuildStatusPage 的 bOneLine)。
+//   user judged single-line worse than the multi-line one, so it is not the default (see bOneLine in Bms_BuildStatusPage).
 //
 // VGUI panel 通道已经废掉: SendPanelToClient 每发一次就是开一块 VGUI 菜单,
+// The VGUI panel transport is dead: SendPanelToClient opens a VGUI menu on every send,
 // 它会占住客户端的菜单槽 —— 实机表现是**整个游戏里所有切枪键失效**(slot1..
+// and it occupies the client's menu slot — the live behaviour is that **all weapon-switch keys in the whole game stop working** (slot1..
 // slot5、绑定的 G 全都没反应), 1 Hz 重发等于一直占着。所以通道 2 改成
+// slot5, the bound G key, nothing responds); a 1 Hz resend means it is occupied permanently. So channel 2 was changed to
 // HudMsg + 紧凑排版(见 Bms_BuildStatusPage 里的 bCompact)。
+// HudMsg + compact layout (see bCompact in Bms_BuildStatusPage).
 // 面板通道的音效由 bms_status_hintsound 关掉(默认关)。
+// The panel transport's sound is turned off by bms_status_hintsound (off by default).
 // bms_status_active 给 showhealth / SpecDetails 模块当信标, 它们看到 1 就
+// bms_status_active is a beacon for the showhealth / SpecDetails modules; when they see 1 they
 // 不再自己往屏幕上写(否则同一份信息在屏幕上摆两处)。
+// stop writing to the screen themselves (otherwise the same information would appear in two places).
 // 观战时本页画的是被观察者(m_hObserverTarget)的 HP/护甲/武器, 名字与 K/D
+// When spectating, this page draws the observed player's (m_hObserverTarget) HP/armor/weapon, with name and K/D
 // 并进第一行, 所以 SpecDetails 那块 VGUI 面板已经没有存在的必要。
+// merged into the first line, so the SpecDetails VGUI panel no longer needs to exist.
 ConVar gBmsStatusPage;
 ConVar gBmsStatusActive;
 // 0 = hint 面板(底框, 每条消息重播一次缩放动画, 看起来就是闪), 1 = HudMsg,
+// 0 = hint panel (box; replays the scale animation on every message, which looks like flicker), 1 = HudMsg,
 // 2 = HudMsg + 记分块(紧凑排版, 6 行塞满)。
+// 2 = HudMsg + score block (compact layout, six lines fully packed).
 ConVar gBmsStatusChannel;
 // 仅 hint 面板通道有效: 1 = KeyHintText(CHudHintKeyDisplay, 多行到处都正常,
+// Only effective on the hint-panel transport: 1 = KeyHintText (CHudHintKeyDisplay, multi-line works everywhere,
 // 每条消息在客户端播一声「啵」), 0 = HintText(CHudHintDisplay, 音效名
+// every message plays a "blip" sound on the client), 0 = HintText (CHudHintDisplay, sound name
 // "Hud.Hint" 在 BM 里不存在所以天生静音, 但原版客户端缺 HudHintText 字体,
+// "Hud.Hint" does not exist in BM so it is silent by nature, but the stock client lacks the HudHintText font,
 // 多行会叠在一起)。
+// so multi-line text piles together).
 ConVar gBmsStatusKeyHint;
 // 面板音效开关: 0 = 关掉(服务端 sv_hudhint_sound 0 + 让客户端执行
+// Panel sound switch: 0 = off (server sv_hudhint_sound 0 + make the client run
 // cl_hudhint_sound 0), 1 = 交还给玩家设置。见 Bms_ApplyHintSound() 与
+// cl_hudhint_sound 0), 1 = hand it back to the player's settings. See Bms_ApplyHintSound() and
 // Bms_MuteHintSound()。
+// Bms_MuteHintSound().
 ConVar gBmsStatusHintSound;
 // HudMsg 第二组颜色的实验开关(bms_status_shadow), 见 CreateConVar 处的说明。
+// Experimental switch for the HudMsg second colour group (bms_status_shadow), see the note at CreateConVar.
 ConVar gBmsStatusShadow;
 // 文字的右边界(屏幕宽的比例)。HudMessage 面板本身是 700x480 HUD 单位、
+// Right edge of the text (fraction of screen width). The HudMessage panel itself is 700x480 HUD units,
 // 左上角贴 (0,0), 超过面板右边就被裁掉, 而那条边随画面比例变
+// top-left corner at (0,0); anything past the panel's right side is clipped, and that edge varies with aspect ratio
 // (16:9 ≈ 0.820, 16:10 ≈ 0.911, 21:9 ≈ 0.625), 所以留成 cvar 好现场调。
+// (16:9 ≈ 0.820, 16:10 ≈ 0.911, 21:9 ≈ 0.625), so it is left as a cvar for on-site tuning.
 ConVar gBmsStatusRight;
 // 比分板(自己的 K/D/延迟 + 前五名), 只在通道 2 里画(那边为它做紧凑排版)。
+// Score block (own K/D/latency + top-5), only drawn on channel 2 (which uses a compact layout for it).
 ConVar gBmsStatusStats;
 // 让位窗口: 投票/菜单弹出来的这段时间, 状态页整块停发, 否则每秒一发的
+// Yield window: while a vote/menu is up, the whole status page pauses sending, otherwise the once-per-second
 // 面板会把正在投票的页面顶掉。值 = 绝对服务器时间(GetGameTime), 谁要弹
+// panel would push the voting page off the screen. Value = absolute server time (GetGameTime); whoever pops
 // 菜单谁就往后推(见文件末尾的 Bms_StatusYield 说明)。
+// a menu pushes it forward (see the Bms_StatusYield note at the end of the file).
 ConVar gBmsStatusYield;
 // bms_match 自己弹给某个玩家的菜单: 只停这个人的状态页, 不动别人。
+// Menus bms_match itself pops to a specific player: pause only that player's status page, not everyone else's.
 float gBmsStatusYieldClient[MAXPLAYERS + 1];
 // 上一次真正发给该客户端的整段文本(hint 面板通道的内容去重: 客户端每收到
+// The whole text last actually sent to this client (hint-panel transport content dedupe: every time the client receives
 // 一条 KeyHintText 都会把子面板全拆了重建, 整块框闪一下)。
+// a KeyHintText it tears down and rebuilds all sub-panels, flickering the whole box once).
 char gBmsStatusLastBody[MAXPLAYERS + 1][1024];
 // 上一次真正发出去的服务器时间。HintMessageShow 动画 12 秒后自动把面板
+// Server time of the last actual send. The HintMessageShow animation auto-hides the panel after 12 s,
 // 藏起来, 所以文本没变也要隔一阵子补发一次(见 Bms_SendStatusPage)。
+// so even unchanged text must be resent periodically (see Bms_SendStatusPage).
 float gBmsStatusLastHint[MAXPLAYERS + 1];
 // 已经给该客户端发过 cl_hudhint_sound 0(见 Bms_MuteHintSound)。
+// Whether we have already sent cl_hudhint_sound 0 to this client (see Bms_MuteHintSound).
 bool gBmsHintSoundMuted[MAXPLAYERS + 1];
 // HudMsg 通道上一次占用的行数(槽位数), 用来把多出来的旧行清空。
+// Number of lines (slots) the HudMsg transport used last time, used to clear the leftover old lines.
 int gBmsStatusHudLines[MAXPLAYERS + 1];
 
 bool Bms_IsGameMatch()
@@ -367,15 +417,22 @@ bool Bms_TeamplayAvailable()
 }
 
 // 当前地图是不是单人战役: -1 = 还没判定, 0 = 不是, 1 = 是。
+// Whether the current map is singleplayer campaign: -1 = not determined yet, 0 = no, 1 = yes.
 int gBmsCampaign = -1;
 
 // 单人剧情模式不需要比赛 —— 引擎那边注册的是战役自己的队伍(而且索引 0 是非法
+// Singleplayer story mode does not need a match — the engine registers the campaign's own teams (and index 0 is invalid
 // 的), 逐队 GetTeamName 会抛 "Team index 0 is invalid" 刷满 errors 日志; 比赛
+// anyway), so iterating teams with GetTeamName throws "Team index 0 is invalid" and floods the errors log; the match
 // 状态机/投票在战役里也没有任何意义。所以整张地图上把比赛系统置为静默。
+// state machine/voting also make no sense in the campaign. So the match system is silenced for the whole map.
 //
 // 判据: 战役地图全部形如 bm_c<数字>*(bm_c0a0a … bm_c5a1a); DM 侧地图是
+// Criterion: campaign maps are all of the form bm_c<digit>*(bm_c0a0a … bm_c5a1a); DM-side maps are
 // dm_*/de_*/bm_bunnyrace_beta2, 没有任何地图以 bm_c<数字> 开头 → 前缀匹配安全,
+// dm_*/de_*/bm_bunnyrace_beta2, none of which start with bm_c<digit> → prefix matching is safe,
 // 判定写错时偏向 DM(即保留原有的比赛行为)。缓存由 Bms_LoadConfig() 每张图重置。
+// and a wrong judgement leans toward DM (i.e. keeps the original match behaviour). The cache is reset per map by Bms_LoadConfig().
 bool Bms_IsCampaignMap()
 {
 	if (gBmsCampaign == -1)
@@ -681,13 +738,17 @@ void Bms_LoadConfig()
 	gBmsRound.bOvertime = (Bms_GetConfigInt("Overtime", "Gamemodes", gBmsRound.sMode, 0) == 1);
 
 	// 换图后战役判据要重算(缓存跨图会错判)
+	// After a map change the campaign test must be recomputed (the cache would misjudge across maps)
 	gBmsCampaign = -1;
 
 	if (Bms_IsCampaignMap())
 	{
 		// 单人战役: 别去枚举队伍(BM 的战役 gamerules 只注册了它自己的队伍,
+		// Singleplayer campaign: don't iterate teams (BM's campaign gamerules only register its own teams,
 		// 而索引 0 是"非法"的 → GetTeamName 每次都抛异常刷 errors 日志),
+		// and index 0 is "invalid" → GetTeamName throws and floods the errors log every time),
 		// 也别让比赛系统接管这张图 —— 单人剧情模式不需要比赛。
+		// and don't let the match system take over this map — singleplayer story mode does not need a match.
 		gBmsRound.bTeamplay = false;
 		LogMessage("[bms_match] singleplayer campaign: match system idle");
 	}
@@ -1422,9 +1483,13 @@ void Bms_VGUIPage_Send(int iClient, const char[] sTitle, const char[] sText)
 }
 
 // 只有我们真的用 VGUIMenu 开过 "scores" 面板才需要去关它。客户端自己的记分板
+// Only if we actually opened the "scores" panel via VGUIMenu do we need to close it. The client's own scoreboard
 // (TAB / +showscores) 也是同一个原生面板, 每张图 OnMapStart 无条件 HideAll 会
+// (TAB / +showscores) is the same native panel; an unconditional HideAll on every OnMapStart would
 // 对它发一次 show=0 —— 2026-11-17 用户报 +showscores 失效, 先从消除这个无谓的
+// send it a show=0 — on 2026-11-17 the user reported +showscores stopped working; start by eliminating this pointless
 // 干扰入手(命令本身是纯客户端输入, 服务端拦不住)。
+// interference (the command itself is pure client input, the server cannot block it).
 bool gBmsScoresShown;
 
 void Bms_VGUIPage_Hide(int iClient)
@@ -1445,7 +1510,9 @@ void Bms_VGUIPage_Hide(int iClient)
 	if (!gBmsScoresShown)
 	{
 		// 没开过就绝对不要发 "scores" —— 每张图 OnMapStart 都会 HideAll,
+		// If it was never opened, never send "scores" — HideAll runs on every OnMapStart,
 		// 对客户端自己的记分板面板(TAB / +showscores)发一次 show=0 没道理。
+		// and sending show=0 to the client's own scoreboard panel (TAB / +showscores) makes no sense.
 		return;
 	}
 	// The native scoreboard is a distinct panel addressed by NAME - the
@@ -1502,16 +1569,26 @@ void Bms_VGUIPage_ShowScoresPanel()
  * STATUS HUD (countdown / state / map / players)
  *************************************************************/
 // 更新之后 HUD 顶上的倒计时和「正在等待玩家加入」一类的引擎文本都没了
+// After the update, the countdown at the top of the HUD and engine text like "waiting for players to join" are gone
 // (公服本来就不画 —— Bms_RestoreGamerules 移掉了 mp_round_time; 比赛期的
+// (the public server never drew it anyway — Bms_RestoreGamerules removed mp_round_time; during a match the
 // 倒计时靠 gamerules DoneTime 画, 新版客户端也不画了)。
+// countdown was drawn from gamerules DoneTime, and the new client no longer draws that either).
 // 先试过塞进 VGUI "info" 文本页, 实测新版客户端把它渲染成一行没有换行的黄字
+// First tried stuffing it into the VGUI "info" text page; on the live server the new client rendered it as a single unbroken line of yellow text
 // 且压在屏幕左侧; 也试过 ShowSyncHudText, 位置能对上但没有底框。最终走
+// pinned to the left of the screen; also tried ShowSyncHudText, whose position lines up but which has no background box. Finally settled on
 // PrintHintText: 和 showhealth 的 "Show Health: N" 同一块带底框的面板,
+// PrintHintText: the same boxed panel as showhealth's "Show Health: N",
 // 每秒刷新一次, 行内换行用 \n。
+// refreshed once per second, with in-line newlines via \n.
 //
 // bms_status_page: 0 = 关, 1 = 只发给未存活的人(死亡/观战), 2 = 所有人。
+// bms_status_page: 0 = off, 1 = only sent to players who are not alive (dead/spectating), 2 = everyone.
 // 只有 2 会占用整个 hint 面板, 此时 "Show Health: N" 由本模块一起画,
+// Only 2 occupies the entire hint panel; in that case "Show Health: N" is drawn by this module too,
 // 并通过 bms_status_active 让 showhealth 闭嘴。
+// and bms_status_active makes showhealth shut up.
 void Bms_StatusStateKey(BmsGameState iState, char[] sKey, int iLen)
 {
 	if (iState == BmsState_Paused)         { strcopy(sKey, iLen, "bms_state_paused"); }
@@ -1527,6 +1604,7 @@ void Bms_StatusStateKey(BmsGameState iState, char[] sKey, int iLen)
 void Bms_StatusFmtTime(float fSeconds, char[] sOut, int iLen)
 {
 	// Bms_GetTimeRemaining 在没有时间上限(mp_timelimit<=0 且非比赛)时返回 999999。
+	// Bms_GetTimeRemaining returns 999999 when there is no time limit (mp_timelimit<=0 and not in a match).
 	if (fSeconds >= 999999.0)
 	{
 		strcopy(sOut, iLen, "--:--");
@@ -1548,6 +1626,7 @@ void Bms_StatusFmtTime(float fSeconds, char[] sOut, int iLen)
 }
 
 // 这一页要画谁的 HP/护甲/武器: 观战(以及死亡等待重生)时是被观察者。
+// Whose HP/armor/weapon this page draws: when spectating (and while dead waiting to respawn) it is the observed player.
 int Bms_StatusSubject(int iClient)
 {
 	if (!IsClientObserver(iClient))
@@ -1571,6 +1650,7 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 	Bms_StatusStateKey(gBmsRound.iState, sKey, sizeof(sKey));
 
 	// 空闲且人不够开局 = 旧版本顶部那行「正在等待玩家加入」; 人够了就是死斗。
+	// Idle and not enough players to start = the old "waiting for players to join" top line; enough players = deathmatch.
 	if (gBmsRound.iState == BmsState_Default)
 	{
 		strcopy(sKey, sizeof(sKey), Bms_PlayerCount() < 2 ? "bms_state_waiting" : "bms_state_ffa");
@@ -1583,20 +1663,33 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 	strcopy(sMap, sizeof(sMap), strlen(gBmsRound.sMap) ? gBmsRound.sMap : "--");
 
 	// HudMsg 通道最多 6 个槽位 = 6 行。普通排版:
+	// The HudMsg transport has at most 6 slots = 6 lines. Normal layout:
 	//   HP+护甲 / 状态+人数 / 倒计时 / 地图 / 武器+弹药 / !help
+	//   HP+armor / state+player count / countdown / map / weapon+ammo / !help
 	// 通道 2 还要塞下记分块(自己 K/D/ping + 前五名两行), 于是压成:
+	// Channel 2 also has to fit the score block (own K/D/ping + two lines of top-5), so it is squeezed into:
 	//   HP+护甲 / 地图|状态|倒计时 / 武器 / 自己 K/D/ping / 前五名×2
+	//   HP+armor / map|state|countdown / weapon / own K/D/ping / top-5 ×2
 	// 也就是把前三行并成一行、让掉 !help。
+	// i.e. the first three lines merged into one, and !help dropped.
 	// 通道 0 + bms_status_keyhint 0 的 HintText 只吃单行(见下面的 bOneLine),
+	// Channel 0 + bms_status_keyhint 0 HintText only takes a single line (see bOneLine below),
 	// 排版是: HP: N | 护甲: N | 剩余 T | 状态 N人 | 武器
+	// layout is: HP: N | armor: N | left T | state N players | weapon
 	// 地图与 !help 提示在这条通道上放不下, 留给记分板。默认走 KeyHintText
+	// The map and !help hint do not fit on this transport, so they are left to the scoreboard. The default is KeyHintText
 	// 多行, 这段只在把 hint 面板切到 HintText 时才生效。
+	// multi-line; this section only takes effect when the hint panel is switched to HintText.
 	//
 	// 观战时换成被观察者的数据, 第一行多出「观察 名字 K/D」, 就把 !help 那行
+	// When spectating it switches to the observed player's data; the first line gains "watching name K/D", so the !help line
 	// 让掉(观战者要看的是那个人, 不是指令提示), 普通排版仍然正好 6 行。
+	// is dropped (spectators want to see that person, not the command hints), and the normal layout still fits exactly 6 lines.
 	//
 	// HP 与护甲**常驻**(不再看 showhealth 的开关/on_hit_only/玩家 cookie),
+	// HP and armor are **always shown** (no longer gated by showhealth's switch/on_hit_only/player cookie);
 	// 数字统一带冒号; 两者并成一行, 把第二行让给状态、第三行让给倒计时。
+	// the numbers all carry a colon; the two are merged into one line, giving the second line to state and the third to the countdown.
 	sBody[0] = '\0';
 
 	char sPart[192];
@@ -1604,10 +1697,15 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 	bool bWatching = (iSubject != iClient);
 	bool bCompact = Bms_StatusUseCompact();
 	// 单行: hint 面板的 HintText(CHudHintDisplay) —— 就是 showhealth 那块
+	// Single line: the hint panel's HintText (CHudHintDisplay) — the
 	// 细长条。它是**按行高排版**的, 而原版客户端的 clientscheme.res 里没有
+	// thin long bar that showhealth uses. It lays out **by line height**, and the stock client's clientscheme.res has no
 	// "HudHintText" 字体(只有 HudHintTextLarge/Small), GetFontTall 拿到 0,
+	// "HudHintText" font (only HudHintTextLarge/Small), GetFontTall returns 0,
 	// 多行会全部叠在同一个 y 上。所以这条通道只能发一行; 单行的宽度由文字
+	// so multi-line text all piles onto the same y. Therefore this transport can only send one line; the width of a single line is
 	// 自己撑出来(底框被 clamp 在 hudlayout 的 wide), 正是玩家看到的长条。
+	// stretched out by the text itself (the box is clamped to hudlayout's wide), which is exactly the bar players see.
 	bool bOneLine = Bms_StatusUsesHint() && !Bms_StatusUseKeyHint();
 
 	if (bWatching)
@@ -1619,6 +1717,7 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 			sName, GetClientFrags(iSubject), GetClientDeaths(iSubject));
 
 		// 紧凑排版里没有单独一行放被观察者的 ping, 并进这一行。
+		// The compact layout has no separate line for the observed player's ping, so merge it into this line.
 		if ((bCompact || bOneLine) && Bms_StatusShowStats())
 		{
 			Format(sPart, sizeof(sPart), "%s / %ims", sWatch, Bms_ClientPing(iSubject));
@@ -1636,7 +1735,9 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 	StrCat(sBody, iLen, sPart);
 
 	// 走 FindSendPropInfo 而不是 GetEntProp: 万一这个网络属性不存在,
+	// Use FindSendPropInfo rather than GetEntProp: should this networked property not exist,
 	// GetEntProp 会每秒刷一条 "property not found" 日志。
+	// GetEntProp would flood a "property not found" log line every second.
 	static int iArmorOffs = -2;
 
 	if (iArmorOffs == -2)
@@ -1663,9 +1764,13 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 	StrCat(sBody, iLen, sPart);
 
 	// 倒计时: 热身期间引擎的倒计时是 gamerules 的 m_StateWarmup[0](绝对
+	// Countdown: during warmup the engine's countdown is gamerules' m_StateWarmup[0] (absolute
 	// DoneTime, 与 GetGameTime 同一时钟); 11-17 更新后客户端不再画顶部
+	// DoneTime, same clock as GetGameTime); after the 11-17 update the client no longer draws the top
 	// 倒计时, 这一行就是在补它。热身结束后回到原来的 mp_timelimit 估算
+	// countdown, and this line is making up for it. After warmup ends it reverts to the original mp_timelimit estimate
 	// (比赛走 Bms_GetMatchTimelimit)。
+	// (a match uses Bms_GetMatchTimelimit).
 	char sLeft[32];
 	char sLeftKey[32];
 	float fWarmupDone = GameRules_GetPropFloat("m_StateWarmup", 0);
@@ -1683,10 +1788,15 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 	}
 
 	// KeyHintText 通道每发一条客户端就播一声「啵」(Player.HudHint =
+	// The KeyHintText transport plays a "blip" on the client every time it sends (Player.HudHint =
 	// hev_vox/blip.wav, 只被客户端自己的 cl_hudhint_sound 挡, 那个 cvar 在
+	// hev_vox/blip.wav, blocked only by the client's own cl_hudhint_sound, and that cvar is not
 	// 服务端没注册, 服务端碰不到) —— 走这条通道时才降频: 倒计时按分钟取整,
+	// registered on the server, so the server cannot touch it) — so only on this transport is the rate lowered: the countdown is rounded to minutes,
 	// 只有最后两分钟才逐秒走, 配合 Bms_SendStatusPage 的内容去重, 最坏情况
+	// stepping per second only in the last two minutes, combined with Bms_SendStatusPage's content dedupe; worst case
 	// 一分钟响一次。HintText / HudMsg 都是静音的, 保持逐秒。
+	// it beeps once a minute. HintText / HudMsg are both silent, so they stay per-second.
 	if (Bms_StatusUsesHint() && Bms_StatusUseKeyHint() && fLeft > 120.0 && fLeft < 999999.0)
 	{
 		fLeft = float(RoundToFloor(fLeft / 60.0) * 60);
@@ -1706,7 +1816,9 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 	if (bOneLine)
 	{
 		// 单行: 只留 HP/护甲 + 倒计时 + 状态 + 武器。地图和 !help 提示这条
+		// Single line: keep only HP/armor + countdown + state + weapon. The map and !help hint do not fit on this
 		// 通道放不下 —— 文字是以面板中心为准居中的, 太长会顶出屏幕右边。
+		// transport — the text is centred on the panel centre, so too long overflows past the right edge of the screen.
 		Format(sPart, sizeof(sPart), " | %s | %s", sCount, sStateLine);
 		StrCat(sBody, iLen, sPart);
 	}
@@ -1733,8 +1845,11 @@ void Bms_BuildStatusPage(int iClient, char[] sBody, int iLen)
 	}
 
 	// 记分块: 通道 2 用三列紧凑排版; hint 面板一行一个(那块面板的宽度
+	// Score block: channel 2 uses a compact three-column layout; the hint panel is one per line (that panel's width
 	// 被 clamp 在 hudlayout 的 wide 上, 三列会被裁)。HudMsg 通道 1 六个
+	// is clamped to hudlayout's wide, so three columns would be clipped). HudMsg channel 1's six
 	// 槽位本来就满了, 不加。
+	// slots are already full, so it is not added.
 	if (Bms_StatusShowStats() && (bCompact || (Bms_StatusUsesHint() && !bOneLine)))
 	{
 		Bms_AppendScoreBlock(iClient, iSubject, bWatching, sBody, iLen, bCompact);
@@ -1756,6 +1871,7 @@ bool Bms_StatusShowStats()
 int Bms_ClientPing(int iClient)
 {
 	// GetClientLatency 对 bot 直接抛 "Client N is a bot", 每秒写一行错误日志。
+	// GetClientLatency throws "Client N is a bot" for bots, writing an error log line every second.
 	if (!IsClientConnected(iClient) || IsFakeClient(iClient))
 	{
 		return 0;
@@ -1767,7 +1883,9 @@ int Bms_ClientPing(int iClient)
 }
 
 // UTF-8 首字节 -> 该字符占几个字节。玩家名是 UTF-8, 按字节硬截会切出半个
+// UTF-8 first byte -> how many bytes that character occupies. Player names are UTF-8; a hard byte cut slices a
 // 汉字, 在面板上就是乱码。
+// Chinese character in half, which shows as mojibake on the panel.
 int Bms_Utf8CharLen(int c)
 {
 	if ((c & 0x80) == 0)
@@ -1828,15 +1946,21 @@ bool Bms_ScoreBeats(int iA, int iB)
 }
 
 // 比分板: 自己(观战时是被观察者)的 击杀/死亡/延迟, 再往下是前五名。
+// Scoreboard: own (or, when spectating, the observed player's) kills/deaths/latency, and below that the top-5.
 // HudMsg 通道一共六个槽位, 放不下这六行, 只有 hint 面板和通道 2 画。
+// The HudMsg transport has six slots in total, not enough for these six lines, so only the hint panel and channel 2 draw it.
 // bTight = 通道 2 的三列排版(一行三个人); hint 面板宽度被 clamp 在
+// bTight = channel 2's three-column layout (three per line); the hint panel width is clamped to
 // hudlayout 的 wide 上, 一行三个人会被裁掉半截, 所以那边一行只放一个人。
+// hudlayout's wide, so three per line would be clipped in half, hence one per line there.
 void Bms_AppendScoreBlock(int iClient, int iSubject, bool bWatching, char[] sBody, int iLen, bool bTight)
 {
 	char sPart[192];
 
 	// 自己(或被观察者)的 K/D/ping。观战时 K/D 和 ping 都已经并进第一行,
+	// Own (or observed player's) K/D/ping. When spectating, K/D and ping are already merged into the first line,
 	// 不再重复, 剩下 6 行预算全给前五名。
+	// so they are not repeated; the remaining 6-line budget all goes to the top-5.
 	if (!bWatching)
 	{
 		Format(sPart, sizeof(sPart), "%T", "bms_page_status_stats", iClient,
@@ -1846,6 +1970,7 @@ void Bms_AppendScoreBlock(int iClient, int iSubject, bool bWatching, char[] sBod
 	}
 
 	// 插入排序, 人最多 MaxClients 个, 不值得再引一个排序库。
+	// Insertion sort; at most MaxClients players, not worth pulling in another sort library.
 	int iOrder[MAXPLAYERS];
 	int iCount = 0;
 
@@ -1869,7 +1994,9 @@ void Bms_AppendScoreBlock(int iClient, int iSubject, bool bWatching, char[] sBod
 	}
 
 	// 一行 3 个, 5 个人占两行(第二行只有 2 个)。名字截到 12 字、不带 ping,
+	// Three per line, 5 players occupy two lines (the second line has only 2). Names trimmed to 12 chars, no ping,
 	// 否则带中文名的一行会越过屏幕右边界被裁掉。
+	// otherwise a line with Chinese names would cross the right screen edge and be clipped.
 	char sRow[2][192];
 	sRow[0][0] = '\0';
 	sRow[1][0] = '\0';
@@ -1914,20 +2041,31 @@ void Bms_AppendScoreBlock(int iClient, int iSubject, bool bWatching, char[] sBod
 }
 
 // 当前武器 + 弹药。classname 去掉 "weapon_" 前缀直接当名字用
+// Current weapon + ammo. The classname has the "weapon_" prefix stripped and is used directly as the name
 // (crowbar / smg1 / ar2 / tau / rpg ...), 不改写成本地化名词。
+// (crowbar / smg1 / ar2 / tau / rpg ...), not rewritten into localized nouns.
 // 弹匣读 m_iClip1, 近战/工具是 -1, 只显示名字。
+// The clip reads m_iClip1; melee/tools are -1, and only the name is shown.
 //
 // 备弹分两条路: BM 的 HL1 系武器(glock/mp5/357/crossbow/shotgun/tau/rpg/
+// Reserve ammo takes two paths: BM's HL1-family weapons (glock/mp5/357/crossbow/shotgun/tau/rpg/
 // satchel/snark/tripmine/frag)把备弹存在玩家自己的具名字段里 —— server.dll
+// satchel/snark/tripmine/frag) store reserve ammo in the player's own named fields — server.dll's
 // 的 datamap 建表处(0x107f530c 起)是 FIELD_INTEGER m_iAmmoGlock@0x4e4 /
+// datamap build site (from 0x107f530c) is FIELD_INTEGER m_iAmmoGlock@0x4e4 /
 // m_iAmmoMp5@0x4e8 / m_iAmmo357@0x4ec / m_iAmmoBolt@0x4f0 /
 // m_iAmmoBuckshot@0x4f4 / m_iAmmoEnergy@0x4f8 / m_iAmmoMp5Grenade@0x4fc /
 // m_iAmmoRPG@0x500 / m_iAmmoFrag@0x504 / m_iAmmoSatchel@0x510 /
 // m_iAmmoTripmine@0x50c / m_iAmmoSnark@0x508, 而且这几条在 client.dll 里
+// m_iAmmoTripmine@0x50c / m_iAmmoSnark@0x508, and these have not a single string in client.dll
 // 一个字符串都没有 = 不走网络、只有服务端能读(Prop_Data)。
+// = not networked, readable only by the server (Prop_Data).
 // 高斯枪(weapon_tau)读的就是 m_iAmmoEnergy; 之前按 m_iAmmo[类型] 读拿到
+// The Gauss gun (weapon_tau) reads m_iAmmoEnergy; reading via m_iAmmo[type] earlier got
 // 的是 HL2 那个 SendPropArray3 里的空槽, 所以显示不对。
+// HL2's empty slot in the SendPropArray3, so it displayed wrong.
 // HL2 系武器(ar2/smg1/pistol/...)才走 m_iAmmo + m_iPrimaryAmmoType。
+// HL2-family weapons (ar2/smg1/pistol/...) use m_iAmmo + m_iPrimaryAmmoType.
 bool Bms_StatusWeaponLine(int iClient, char[] sOut, int iLen)
 {
 	int iWeapon = GetEntPropEnt(iClient, Prop_Send, "m_hActiveWeapon");
@@ -1962,8 +2100,11 @@ bool Bms_StatusWeaponLine(int iClient, char[] sOut, int iLen)
 	Format(sWeapon, sizeof(sWeapon), "%T", "bms_page_status_weapon", iClient, sName);
 
 	// 近战/工具本来就没有弹药, m_iClip1 = -1。之前这里只看 iClip < 0, 而下面
+	// Melee/tools have no ammo anyway, m_iClip1 = -1. Previously this only checked iClip < 0, and the fallback
 	// 的兜底把 iReserve 补成 0 之后又去读 HL2 的 m_iAmmo[类型], 撬棍就凭空
+	// below filled iReserve with 0 and then read HL2's m_iAmmo[type], so the crowbar magically
 	// 多出一个数字。这一类武器直接只显示名字。
+	// gained a number. This class of weapon simply shows only the name.
 	if (Bms_WeaponHasNoAmmo(sClass))
 	{
 		Format(sOut, iLen, "%s", sWeapon);
@@ -1971,14 +2112,20 @@ bool Bms_StatusWeaponLine(int iClient, char[] sOut, int iLen)
 	}
 
 	// BM 把"没用到的弹药槽"写成 255(ammodump 实测 mp5 的 m_iClip2 = 255),
+	// BM writes "unused ammo slot" as 255 (ammodump measured mp5's m_iClip2 = 255),
 	// 而不是 HL2 的 -1。tau/rpg 这类没有弹匣的武器 m_iClip1 就是 255, 以前
+	// not HL2's -1. For clip-less weapons like tau/rpg, m_iClip1 is 255; previously this
 	// 当成真弹量显示成 "tau 255/45"。哪一边是 255 就只显示另一边, 两边都是
+	// was shown as real ammo, e.g. "tau 255/45". If either side is 255 show only the other side; if both are
 	// 就只留名字。
+	// 255 keep only the name.
 	bool bClipNone = (iClip < 0 || iClip == 255);
 	bool bReserveNone = (iReserve < 0 || iReserve == 255);
 
 	// mp5 的第二攻击是榴弹, 弹药存在另一个字段 m_iAmmoMp5Grenade 里,
+	// mp5's secondary fire is a grenade, whose ammo is stored in another field m_iAmmoMp5Grenade,
 	// 玩家看不到, 跟在主弹药后面一起显示。
+	// invisible to the player, shown after the primary ammo.
 	char sGrenade[48];
 	sGrenade[0] = '\0';
 
@@ -1987,7 +2134,9 @@ bool Bms_StatusWeaponLine(int iClient, char[] sOut, int iLen)
 		int iNade = Bms_WeaponAmmoCount(iClient, iWeapon, "m_iSecondaryAmmoType");
 
 		// BM 的 mp5 榴弹用 HL2 的 SMG1_Grenade 槽(弹药类型 3); 武器的
+		// BM's mp5 grenade uses HL2's SMG1_Grenade slot (ammo type 3); the weapon's
 		// m_iSecondaryAmmoType 读出来是 255(无), 所以固定回落到 3。
+		// m_iSecondaryAmmoType reads as 255 (none), so it is fixed to fall back to 3.
 		if (iNade < 0)
 		{
 			iNade = Bms_PlayerAmmo(iClient, 3);
@@ -2024,6 +2173,7 @@ bool Bms_StatusWeaponLine(int iClient, char[] sOut, int iLen)
 }
 
 // 没有弹药的武器(近战/工具/生物手雷): 面板只写名字。
+// Weapons with no ammo (melee/tools/bugbait): the panel writes only the name.
 bool Bms_WeaponHasNoAmmo(const char[] sClass)
 {
 	return StrEqual(sClass, "weapon_crowbar")
@@ -2033,7 +2183,9 @@ bool Bms_WeaponHasNoAmmo(const char[] sClass)
 }
 
 // 第二攻击打榴弹的枪。BM 的冲锋枪 classname 是 weapon_mp5(见 bms/cfg/config.cfg
+// Guns whose secondary fire launches grenades. BM's SMG classname is weapon_mp5 (see the bind line
 // 的 bind 行), smg1/grenadelauncher 一并算上, 免得换个名字又漏。
+// in bms/cfg/config.cfg); smg1/grenadelauncher are counted too, so a renamed weapon is not missed.
 bool Bms_WeaponUsesMp5Grenade(const char[] sClass)
 {
 	return StrEqual(sClass, "weapon_mp5")
@@ -2042,8 +2194,11 @@ bool Bms_WeaponUsesMp5Grenade(const char[] sClass)
 }
 
 // 玩家身上的 m_iAmmo 是 SendPropArray3(32 槽), 按武器自己声明的弹药类型索引。
+// The player's m_iAmmo is a SendPropArray3 (32 slots), indexed by the ammo type the weapon itself declares.
 // BM 那些具名字段(m_iAmmoGlock/m_iAmmoMp5Grenade/...)在运行时一个都查不到 ——
+// None of BM's named fields (m_iAmmoGlock/m_iAmmoMp5Grenade/...) can be found at runtime —
 // 2026-11-18 的 ammodump 打印 12 个全是 "no datamap field found", 所以只能走数组。
+// the 2026-11-18 ammodump printed "no datamap field found" for all 12, so we can only use the array.
 int Bms_PlayerAmmo(int iClient, int iType)
 {
 	if (iType < 0 || iType >= 32)
@@ -2069,7 +2224,9 @@ int Bms_PlayerAmmo(int iClient, int iType)
 }
 
 // 读武器声明的弹药类型(m_iPrimaryAmmoType / m_iSecondaryAmmoType),
+// Read the ammo type the weapon declares (m_iPrimaryAmmoType / m_iSecondaryAmmoType),
 // 再取玩家 m_iAmmo 里对应的数量。类型无效时返回 -1。
+// then take the matching count from the player's m_iAmmo. Returns -1 when the type is invalid.
 int Bms_WeaponAmmoCount(int iClient, int iWeapon, const char[] sTypeProp)
 {
 	int iOffs = FindDataMapInfo(iWeapon, sTypeProp);
@@ -2093,7 +2250,9 @@ void Bms_SendStatusPage(int iClient)
 	Bms_BuildStatusPage(iClient, sBody, sizeof(sBody));
 
 	// speclist 模块在同一条通道上, 现在让位给状态页, 观战名单由这里补
+	// The speclist module is on the same transport; it now yields to the status page, and the spectator list is appended
 	// 成最后一行(否则会少掉「谁在看我」这个信息)。
+	// here as the last line (otherwise the "who is watching me" information would be lost).
 	if (!IsClientObserver(iClient))
 	{
 		char sSpecs[256];
@@ -2102,19 +2261,28 @@ void Bms_SendStatusPage(int iClient)
 		if (sSpecs[0])
 		{
 			// 单行通道(HintText)拼在同一行里, 换行在那块面板上等于不换。
+			// The single-line transport (HintText) joins it into the same line; a newline on that panel amounts to no newline.
 			StrCat(sBody, sizeof(sBody), (Bms_StatusUsesHint() && !Bms_StatusUseKeyHint()) ? " | Spectators: " : "\nSpectators: ");
 			StrCat(sBody, sizeof(sBody), sSpecs);
 		}
 	}
 
 	// 底框的宽度是客户端按「最长的那一行」算出来的(CHudHintKeyDisplay 的
+	// The box width is computed by the client from the **longest line** (in CHudHintKeyDisplay's
 	// 绘制函数里 boxW = min(面板宽, 最长行宽 + 2*text_xgap)), 所以数字一变
+	// draw function, boxW = min(panel width, longest line width + 2*text_xgap)), so when a number changes
 	// (HP 100→99)、换个武器、观战名单出现或消失, 框就跟着伸缩。这里垫一条
+	// (HP 100→99), the weapon changes, or the spectator list appears/disappears, the box stretches/shrinks with it. Pad here with an
 	// 纯空格行: 空格同样计入文字宽度, 45 个远超过 hudlayout 的 wide 100,
+	// all-spaces line: spaces also count toward text width, and 45 far exceeds hudlayout's wide 100,
 	// 于是「最长行」永远是这一行, 底框被 clamp 成固定长度。这一行本身什么都
+	// so the "longest line" is always this line and the box is clamped to a fixed length. This line itself draws
 	// 画不出来, 只是把框撑住不动。
+	// nothing; it just holds the box steady.
 	// 只在 KeyHintText 那条上垫 —— HintText(CHudHintDisplay) 只吃得下单行,
+	// Pad only on the KeyHintText transport — HintText (CHudHintDisplay) only takes a single line,
 	// HudMsg 是另一套排版, 都不需要也不会受它影响。
+	// and HudMsg is a different layout; neither needs it nor is affected by it.
 	if (Bms_StatusUsesHint() && Bms_StatusUseKeyHint())
 	{
 		StrCat(sBody, sizeof(sBody), "\n");
@@ -2126,6 +2294,7 @@ void Bms_SendStatusPage(int iClient)
 	}
 
 	// 通道 2 和通道 1 走同一条 HudMsg, 区别只在排版(以及 2 多一段记分块)。
+	// Channels 2 and 1 use the same HudMsg; the only difference is the layout (plus channel 2's extra score block).
 	if (Bms_StatusUseHudMsg() || Bms_StatusUseCompact())
 	{
 		Bms_SendStatusHudMsg(iClient, sBody);
@@ -2133,14 +2302,19 @@ void Bms_SendStatusPage(int iClient)
 	}
 
 	// 中文尾巴按 textmsg_fix 的规矩补一个空格, 否则 CP936 下客户端
+	// Append a trailing space per the textmsg_fix convention, otherwise under CP936 the client
 	// _vsnprintf 会 fail-fast(BMAG 与 tau_mp 都是这么发的)。
+	// _vsnprintf will fail-fast (both BMAG and tau_mp send this way).
 	char sHint[1024];
 	strcopy(sHint, sizeof(sHint), sBody);
 	StrCat(sHint, sizeof(sHint), " ");
 
 	// 内容一个字节都没变就别发了 —— 客户端会把子面板整批拆了重建,
+	// If not a single byte of content changed, don't send — the client tears down and rebuilds all sub-panels,
 	// 屏幕上的框跟着闪。但 hudanimations.txt 里 HintMessageShow 12 秒后
+	// flickering the on-screen box. But in hudanimations.txt HintMessageShow hides itself after 12 s,
 	// 自己 Hide, 所以文本静止(暂停、时间不走)时也要 10 秒补一发, 否则框没了。
+	// so when the text is static (paused, time not advancing) it must still be resent every 10 s, or the box disappears.
 	if (StrEqual(gBmsStatusLastBody[iClient], sHint)
 		&& GetGameTime() - gBmsStatusLastHint[iClient] < 10.0)
 	{
@@ -2153,21 +2327,32 @@ void Bms_SendStatusPage(int iClient)
 }
 
 // HudMsg 的几何(屏幕比例)和行距。HudMsg 是**从 x 往右画**, 所以要让整块
+// HudMsg geometry (screen fraction) and line spacing. HudMsg draws **from x rightward**, so to make the whole block
 // 文字贴住屏幕右侧, 每行得按自己的字数倒推 x(见 Bms_StatusLineWidth)。
+// of text hug the right side of the screen, each line must back-compute its x from its own character count (see Bms_StatusLineWidth).
 // y 从 0.50 起往下排 6 行, 落在原来那块面板的位置(右侧中部)。
+// y starts at 0.50 and lays 6 lines downward, landing where the old panel was (middle right).
 //
 // 右边界不能取满: HudMsg 画在 HudMessage 面板里(hudlayout.res 里
+// The right edge cannot be pushed all the way: HudMsg draws inside the HudMessage panel (in hudlayout.res
 // wide 700 / tall 480 / 无 xpos, 即贴 (0,0)), 超过面板右边直接被裁 ——
+// wide 700 / tall 480 / no xpos, i.e. pinned at (0,0)); past the panel's right side it is clipped outright —
 // 之前用 0.978 时整页右边全被切掉就是这个原因。
+// that is why, when 0.978 was used before, the whole right side of the page got cut off.
 // 面板右边 = 700/(480*画面比例): 16:10 ≈ 0.911, 16:9 ≈ 0.820, 21:9 ≈ 0.625。
+// Panel right edge = 700/(480*aspect ratio): 16:10 ≈ 0.911, 16:9 ≈ 0.820, 21:9 ≈ 0.625.
 // 服务端问不到客户端的画面比例(SM 没有这种 native), 所以只能取一个值;
+// The server cannot query the client's aspect ratio (SM has no such native), so it can only pick one value;
 // 默认按 16:10 贴边, 16:9 的客户端请 sm_cvar bms_status_right 0.81。
+// default hugs the edge at 16:10; 16:9 clients should use sm_cvar bms_status_right 0.81.
 #define BMS_HUDMSG_LINES   6
 #define BMS_HUDMSG_RIGHT   0.89
 #define BMS_HUDMSG_Y       0.50
 #define BMS_HUDMSG_STEP    0.028
 // 实测字宽(屏幕宽的比例): 半角 ≈ 0.0079, 全角 ≈ 2 倍。1920x1200 下按这组
+// Measured char width (fraction of screen width): half-width ≈ 0.0079, full-width ≈ 2x. Under 1920x1200, back-computing
 // 值倒推, 六行右端对齐在 ±2px 内(0.0107 那版偏宽, 整块比目标左移了 50 多 px)。
+// with this set, the six lines' right ends align within ±2px (the 0.0107 version was too wide, shifting the whole block 50-odd px left of target).
 #define BMS_HUDMSG_CHARW   0.0079
 
 float Bms_StatusRightEdge()
@@ -2214,9 +2399,13 @@ bool Bms_StatusUseCompact()
 }
 
 // 让位窗口取「全局窗口」和「这个人的窗口」里更晚的那个:
+// The yield window takes the later of the "global window" and "this person's window":
 //   全局 —— 投票是发给所有人的, 弹菜单的那一刻把 bms_status_yield 推到
+//   global — a vote goes to everyone; the moment the menu pops, push bms_status_yield to
 //           GetGameTime()+时长, 投票期间全服的状态页都停;
+//           GetGameTime()+duration, so the whole server's status page pauses during the vote;
 //   个人 —— bms_match 自己弹的菜单(!help 之类)只停那个人的。
+//   personal — menus bms_match itself pops (!help etc.) pause only that person's.
 float Bms_StatusYieldUntil(int iClient)
 {
 	float fUntil = gBmsStatusYieldClient[iClient];
@@ -2235,12 +2424,18 @@ float Bms_StatusYieldUntil(int iClient)
 }
 
 // 一行一个槽位。CHudMessage 的 HudMsg 线上格式, 由 server.dll 自己的发送
+// One slot per line. The CHudMessage HudMsg wire format, matched both ways by server.dll's own send
 // 函数(0x102b5780) 与 client.dll 的解析(0x101741a0) 双向对上:
+// function (0x102b5780) and client.dll's parse (0x101741a0):
 //   byte channel, float x, float y, byte×8(两组 RGBA), byte effect,
+//   byte channel, float x, float y, byte×8 (two RGBA groups), byte effect,
 //   float fadeIn, float fadeOut, float hold, float fxTime, string text
 // x/y 是屏幕比例, text 是纯文本(不是 #token —— 引擎自己也是直接传
+// x/y are screen fractions, text is plain text (not a #token — the engine itself passes
 // "A.I. Disabled...\n" 这种字面量)。channel 在客户端取模 6, 正好有六个
+// literals like "A.I. Disabled...\n" directly). channel is taken modulo 6 on the client, exactly six
 // 内建槽位(__NETMESSAGE__1..6), 拿来一行一个槽位。
+// built-in slots (__NETMESSAGE__1..6), used as one slot per line.
 void Bms_SendHudMsg(int iClient, int iChannel, float fX, float fY, const char[] sText)
 {
 	Handle hMsg = StartMessageOne("HudMsg", iClient);
@@ -2255,10 +2450,15 @@ void Bms_SendHudMsg(int iClient, int iChannel, float fX, float fY, const char[] 
 	BfWriteFloat(hMsg, fY);
 
 	// 两组颜色各 RGBA。原版 HL2 只有一组, BM 扩成两组; 客户端把 8 个字节
+	// Two colour groups, each RGBA. Original HL2 had only one; BM expanded it to two; the client stores the 8
 	// 分别存进槽位对象的 +4..+0xb, 但画的时候用不用第二组还没实测。默认
+	// bytes separately into the slot object's +4..+0xb, but whether the second group is actually drawn is untested. Default
 	// 两组同色(引擎自己的调用点 0x1006f1da 也是两组写同一个值), 取 hint
+	// both groups the same colour (the engine's own call site 0x1006f1da also writes the same value to both), taking the hint
 	// 面板的 TextColor "255 170 0 220"; bms_status_shadow 1 时第二组换成
+	// panel's TextColor "255 170 0 220"; with bms_status_shadow 1 the second group becomes
 	// 不透明黑, 当作描边试一下。
+	// opaque black, trying it as an outline.
 	bool bShadow = (gBmsStatusShadow != null && gBmsStatusShadow.BoolValue);
 
 	for (int i = 0; i < 2; i++)
@@ -2279,16 +2479,20 @@ void Bms_SendHudMsg(int iClient, int iChannel, float fX, float fY, const char[] 
 	}
 
 	BfWriteByte(hMsg, 0);        // effect: 0 = 无
+	// effect: 0 = none
 	BfWriteFloat(hMsg, 0.0);     // fadeIn
 	BfWriteFloat(hMsg, 0.2);     // fadeOut
 	BfWriteFloat(hMsg, 1.6);     // hold(每秒重发一次, 覆盖住就不会闪)
+	// hold (resent once per second; overlapping redraws prevent flicker)
 	BfWriteFloat(hMsg, 0.0);     // fxTime
 	BfWriteString(hMsg, sText);
 	EndMessage();
 }
 
 // 估算一行的屏幕宽度(屏幕宽的比例)。半角 1 份, 全角 2 份(UTF-8 里中文
+// Estimate a line's on-screen width (fraction of screen width). Half-width counts 1 unit, full-width 2 units (in UTF-8, Chinese
 // 只有前导字节 >= 0xC0, 后续字节是 0x80..0xBF, 按这个区分)。
+// only has a lead byte >= 0xC0; continuation bytes are 0x80..0xBF, distinguished by this).
 float Bms_StatusLineWidth(const char[] sText)
 {
 	float fUnits = 0.0;
@@ -2311,6 +2515,7 @@ float Bms_StatusLineWidth(const char[] sText)
 }
 
 // 右对齐后的 x; 行太长就退回左边界, 宁可不齐也不要跑到屏幕外。
+// x after right alignment; if the line is too long fall back to the left edge — better misaligned than off-screen.
 float Bms_StatusLineX(const char[] sText)
 {
 	float fX = Bms_StatusRightEdge() - Bms_StatusLineWidth(sText);
@@ -2329,6 +2534,7 @@ void Bms_SendStatusHudMsg(int iClient, const char[] sBody)
 		if (iLines == BMS_HUDMSG_LINES - 1)
 		{
 			// 最后一行把剩下的全吃进来(hint 面板通道有 7 行, 观战名单会溢到这里)
+			// The last line swallows all the rest (the hint-panel transport has 7 lines; the spectator list overflows here)
 			strcopy(sLines[iLines], 128, sBody[iPos]);
 			ReplaceString(sLines[iLines], 128, "\n", " | ");
 			iLines++;
@@ -2358,12 +2564,15 @@ void Bms_SendStatusHudMsg(int iClient, const char[] sBody)
 	{
 		char sLine[136];
 		// 末尾补空格: 和 hint 通道同样的 CP936 尾巴保险。
+		// Trailing space added: same CP936 tail guard as the hint transport.
 		Format(sLine, sizeof(sLine), "%s ", sLines[i]);
 		Bms_SendHudMsg(iClient, i, Bms_StatusLineX(sLine), BMS_HUDMSG_Y + float(i) * BMS_HUDMSG_STEP, sLine);
 	}
 
 	// 上一帧占用的行数比这一帧多(比如观战者离开), 把多出来的槽位用空串
+	// The previous frame used more lines than this frame (e.g. a spectator left); overwrite the extra slots with an empty string,
 	// 覆盖掉, 否则它们要等 hold 到期才自己消失。
+	// otherwise they wait for hold to expire before disappearing on their own.
 	for (int i = iLines; i < gBmsStatusHudLines[iClient]; i++)
 	{
 		Bms_SendHudMsg(iClient, i, Bms_StatusRightEdge(), BMS_HUDMSG_Y + float(i) * BMS_HUDMSG_STEP, "");
@@ -2379,8 +2588,11 @@ bool Bms_StatusUseKeyHint()
 }
 
 // CHudHintDisplay::MsgFunc_HintText 把整条消息读进一个 256 字节的静态缓冲区
+// CHudHintDisplay::MsgFunc_HintText reads the whole message into a 256-byte static buffer
 // (client.dll 0x10159ff0 那条路径, push 0x100), 超出的部分引擎会直接砍。
+// (client.dll 0x10159ff0 path, push 0x100); the engine simply cuts off the excess.
 // 服务端先按整行砍好再发, 免得砍在多字节字符中间。
+// The server truncates on whole-line boundaries first before sending, so it never cuts mid multi-byte character.
 #define BMS_HINTTEXT_MAX 250
 
 int Bms_HintTextFit(const char[] sText)
@@ -2393,6 +2605,7 @@ int Bms_HintTextFit(const char[] sText)
 	}
 
 	// 优先退到上一个整行; 某一行自己就超长才退到 UTF-8 首字节。
+	// Prefer falling back to the previous whole line; only when a single line itself is too long fall back to a UTF-8 lead byte.
 	for (int i = BMS_HINTTEXT_MAX; i > 0; i--)
 	{
 		if (sText[i] == '\n')
@@ -2412,23 +2625,36 @@ int Bms_HintTextFit(const char[] sText)
 }
 
 // 两条 hint 通道在客户端是两个不同的面板类, 但 hudlayout.res 里几何完全一样
+// The two hint transports are two different panel classes on the client, but their geometry in hudlayout.res is exactly the same
 // (都是 xpos r120 / ypos r340 / wide 100 / tall 200 / PaintBackgroundType 2),
+// (both xpos r120 / ypos r340 / wide 100 / tall 200 / PaintBackgroundType 2),
 // 所以换通道不会挪位置。区别只有声音:
+// so switching transport does not move anything. The only difference is sound:
 //
 //   HintText   (CHudHintDisplay)     → EmitSound "Hud.Hint"
 //   KeyHintText(CHudHintKeyDisplay)  → EmitSound "Player.HudHint"
 //
 // "Hud.Hint" 这个名字在 BM 的所有 soundscript 里都不存在(只有 client.dll 里
+// The name "Hud.Hint" does not exist in any of BM's soundscripts (only in client.dll as
 // 一个字符串字面量), 所以 HintText 天然无声; 而且它还额外被
+// a string literal), so HintText is silent by nature; and it is additionally gated by
 // sv_hudhint_sound(服务端, FCVAR_REPLICATED)+ cl_hudhint_sound 双门挡着。
+// sv_hudhint_sound (server-side, FCVAR_REPLICATED) + cl_hudhint_sound.
 // "Player.HudHint" 则是 scripts/game_sounds_player.txt 里的真声音
+// "Player.HudHint" is a real sound in scripts/game_sounds_player.txt
 // (wave "/hev_vox/blip.wav", volume 0.18, pitch 115), 而那条路径**只看**
+// (wave "/hev_vox/blip.wav", volume 0.18, pitch 115), and that path **looks only at**
 // 客户端自己的 cl_hudhint_sound(FCVAR_ARCHIVE|FCVAR_CLIENTDLL, 服务端没注册
+// the client's own cl_hudhint_sound (FCVAR_ARCHIVE|FCVAR_CLIENTDLL; the server does not register
 // 同名 cvar, SendConVarValue 也用不上)。
+// a same-named cvar, and SendConVarValue is useless here).
 //
 // 所以默认走 KeyHintText(多行, 但会闪), 声音交给 Bms_MuteHintSound() 从
+// So the default is KeyHintText (multi-line, but flickers); the sound is turned off
 // 客户端关掉。HintText 那条静音不闪、代价是只能单行(见 Bms_BuildStatusPage
+// from the client by Bms_MuteHintSound(). The HintText one is silent and non-flickering, at the cost of single-line only (see Bms_BuildStatusPage's
 // 的 bOneLine), 用户对比后不要它。
+// bOneLine); the user doesn't want it after comparing.
 void Bms_SendHintPanel(int iClient, const char[] sText)
 {
 	if (Bms_StatusUseKeyHint())
@@ -2441,17 +2667,23 @@ void Bms_SendHintPanel(int iClient, const char[] sText)
 	strcopy(sFit, sizeof(sFit), sText);
 	sFit[Bms_HintTextFit(sText)] = '\0';
 	// 截断可能把原来的尾巴空格砍掉了, 这里补回来(CP936 尾巴保险)。
+	// Truncation may have cut off the trailing space; add it back here (CP936 tail guard).
 	StrCat(sFit, sizeof(sFit), " ");
 	mod_textmsg_fix_SafePrintHintText(iClient, "%s", sFit);
 }
 
 // 状态页自己是静音的, 但它和引擎自带的 hint 面板共用 sv_hudhint_sound 这个
+// The status page is silent itself, but it shares the sv_hudhint_sound server switch with the engine's own hint panel.
 // 服务端开关。bms_status_hintsound 0(默认)= 强制 sv_hudhint_sound 0,
+// bms_status_hintsound 0 (default) = force sv_hudhint_sound 0;
 // 1 = 交还给 cfg 里的值。只在内存里改, 不动任何 cfg 文件。
+// 1 = hand it back to the value in the cfg. Changed only in memory, never touching any cfg file.
 void Bms_ApplyHintSound()
 {
 	// HudMsg / VGUI panel 通道根本不碰 hint 面板, 别去改这个服务端 cvar 影响
+	// The HudMsg / VGUI panel transports do not touch the hint panel at all; don't change this server cvar and affect
 	// 别处的 hint 文本。
+	// hint text elsewhere.
 	if (!Bms_StatusUsesHint())
 	{
 		return;
@@ -2473,11 +2705,17 @@ void Bms_ApplyHintSound()
 }
 
 // 那声「啵」本身来自客户端, 而 cl_hudhint_sound 是 FCVAR_ARCHIVE|FCVAR_CLIENTDLL
+// The "blip" itself comes from the client, and cl_hudhint_sound is FCVAR_ARCHIVE|FCVAR_CLIENTDLL,
 // 的纯客户端 cvar(server.dll 里连这个字符串都没有, FindConVar 拿不到, 也就用不了
+// a pure client cvar (server.dll does not even contain this string, so FindConVar cannot get it, and therefore
 // SendConVarValue)。但客户端控制台能改它, 而服务端可以让客户端执行一行命令:
+// SendConVarValue is unusable). But the client console can change it, and the server can make the client execute a command line:
 // ClientCommand 走 IServerPluginHelpers, 在客户端按用户输入的命令行解析, cvar
+// ClientCommand goes through IServerPluginHelpers and is parsed on the client as a user-typed command line; a cvar
 // 赋值一样生效。ARCHIVE 标记意味着它会被客户端自己写进 config.cfg(下次进来
+// assignment works the same way. The ARCHIVE flag means the client will write it into config.cfg itself (next time it enters it
 // 本来就是 0, 所以每个客户端只需发一次)。
+// is already 0, so each client only needs to be sent once).
 void Bms_MuteHintSound(int iClient)
 {
 	if (!Bms_StatusUsesHint() || gBmsHintSoundMuted[iClient])
@@ -2496,7 +2734,9 @@ void Bms_MuteHintSound(int iClient)
 }
 
 // CHudHintKeyDisplay::MsgFunc_KeyHintText 的线上格式: 一个字节的字符串
+// CHudHintKeyDisplay::MsgFunc_KeyHintText wire format: a one-byte count of
 // 个数, 然后逐个字符串; 客户端自己把它们用 '\n' 拼起来再按行排版。
+// strings, then each string one by one; the client joins them with '\n' itself and lays them out by line.
 void Bms_SendKeyHintText(int iClient, const char[] sText)
 {
 	Handle hMsg = StartMessageOne("KeyHintText", iClient);
@@ -2518,7 +2758,9 @@ public Action BmsT_StatusPage(Handle hTimer)
 	int iMode = (gBmsStatusPage != null) ? gBmsStatusPage.IntValue : 0;
 
 	// 只有「所有人 + 非战役 + 非赛后」才由本模块独占 hint 面板; 其余情况下
+	// Only "everyone + non-campaign + non-post-match" does this module exclusively own the hint panel; in all other cases
 	// showhealth 照常自己写 "Show Health: N"。
+	// showhealth writes "Show Health: N" itself as usual.
 	bool bOwn = (iMode >= 2 && !bCampaign && !bOver);
 
 	if (gBmsStatusActive != null)
@@ -2527,12 +2769,17 @@ public Action BmsT_StatusPage(Handle hTimer)
 	}
 
 	// 声音: 「啵」= KeyHintText 通道的 EmitSound("Player.HudHint")
+	// Sound: the "blip" = the KeyHintText transport's EmitSound("Player.HudHint")
 	// (hev_vox/blip.wav), 那条路径只看客户端自己的 cl_hudhint_sound; 这个
+	// (hev_vox/blip.wav); that path looks only at the client's own cl_hudhint_sound; this
 	// cvar 在服务端没注册(server.dll 里零字符串), 但可以让客户端自己去执行
+	// cvar is not registered on the server (zero strings in server.dll), but the client can be made to execute
 	// 一行控制台命令 —— 见 Bms_MuteHintSound()。
+	// a console command line itself — see Bms_MuteHintSound().
 	if (bCampaign || bOver || iMode <= 0)
 	{
 		// 面板已经交还给别人, 清掉去重缓存: 下次接管时第一帧必须重画。
+		// The panel has been handed back to someone else; clear the dedupe cache: the first frame after taking over again must redraw.
 		for (int iClient = 1; iClient <= MaxClients; iClient++)
 		{
 			gBmsStatusLastBody[iClient][0] = '\0';
@@ -2557,7 +2804,9 @@ public Action BmsT_StatusPage(Handle hTimer)
 			continue;
 		}
 		// 投票/菜单正占着屏幕: 这一秒不发, 免得状态页的文字压在投票选项上。
+		// A vote/menu is occupying the screen: don't send this second, so the status text does not pile onto the vote options.
 		// 让位窗口一过(见 bms_status_yield)下一帧自动恢复。
+		// Once the yield window passes (see bms_status_yield) it resumes automatically next frame.
 		if (GetGameTime() < Bms_StatusYieldUntil(iClient))
 		{
 			gBmsStatusLastBody[iClient][0] = '\0';
@@ -2571,12 +2820,17 @@ public Action BmsT_StatusPage(Handle hTimer)
 }
 
 // 诊断用: 把当前武器和玩家身上所有可能的弹药字段打到控制台(同时进日志)。
+// Diagnostic: dump the current weapon and every possible ammo field on the player to the console (and into the log).
 // 状态页的弹药行到底该读哪个字段, 只能拿真机的数字来定, 别再猜。
+// Which field the status page's ammo line should actually read can only be decided from real-machine numbers, so stop guessing.
 public Action BmsCmd_AmmoDump(int iClient, int iArgs)
 {
 	// 监听服务器上 ~ 控制台就是主机玩家的控制台, 命令会以 client 0 派发过来;
+	// On a listen server ~ console is the host player's console, and the command is dispatched with client 0;
 	// 直接往下走会在 Bms_StatusSubject 上崩 "Client index 0 is invalid"。
+	// continuing straight down would crash in Bms_StatusSubject with "Client index 0 is invalid".
 	// 这种情况下把主语换成第一个真人玩家(监听服务器上就是主机自己)。
+	// In that case switch the subject to the first real player (on a listen server that is the host himself).
 	if (iClient < 1 || !IsClientInGame(iClient))
 	{
 		iClient = 0;
@@ -2635,8 +2889,11 @@ public Action BmsCmd_AmmoDump(int iClient, int iArgs)
 		iSubject, sClass, iClip1, iClip2, iType);
 
 	// 12 个具名弹药字段在 2026-11-17 的 server.dll 里是连号的 Prop_Data
+	// The 12 named ammo fields are consecutive Prop_Data in the 2026-11-17 server.dll
 	// (m_iAmmoGlock@0x4e4 ... m_iAmmoSatchel@0x510), 但 FindDataMapInfo 查不到,
+	// (m_iAmmoGlock@0x4e4 ... m_iAmmoSatchel@0x510), but FindDataMapInfo cannot find them;
 	// 这里按裸偏移直接读一遍, 用来确认 tau/gluon/rpg 的真实备弹落在哪个槽。
+	// here we read them directly by raw offset, to confirm which slot tau/gluon/rpg's real reserve ammo lands in.
 	char sLine[384];
 	sLine[0] = '\0';
 
@@ -2826,6 +3083,7 @@ void Bms_DisplayHelpMenu(int iClient)
 	menu.AddItem("invert", sDisplay);
 	menu.ExitButton = false;
 	// 菜单和状态页抢同一块 VGUI 面板: 菜单在的这 30 秒让状态页停发。
+	// The menu and the status page contend for the same VGUI panel: while the menu is up (these 30 s) the status page pauses sending.
 	gBmsStatusYieldClient[iClient] = GetGameTime() + 32.0;
 	menu.Display(iClient, 30);
 }
@@ -4039,7 +4297,9 @@ int Bms_GetOptimalTeam()
 public Action BmsT_CheckPlayerStates(Handle hTimer)
 {
 	// 单人战役: 比赛状态机整张图静默(见 Bms_IsCampaignMap)。
+	// Singleplayer campaign: the match state machine stays silent for the whole map (see Bms_IsCampaignMap).
 	// 尤其要挡住下面的 BmsT_TeamAutoAssign —— 战役里把玩家"分队"毫无意义。
+	// In particular it must block BmsT_TeamAutoAssign below — "assigning teams" to players in a campaign is meaningless.
 	if (Bms_IsCampaignMap())
 	{
 		return Plugin_Continue;
@@ -4224,6 +4484,7 @@ void Bms_DisplayVoteMenu(int iClient)
 	}
 	menu.ExitButton = false;
 	// 同上: 投票菜单显示 30 秒, 这段时间状态页让位, 否则选票页面每秒被顶掉。
+	// Same as above: the vote menu shows for 30 s, during which the status page yields, otherwise the ballot page is shoved aside every second.
 	gBmsStatusYieldClient[iClient] = GetGameTime() + 32.0;
 	menu.Display(iClient, 30);
 }
@@ -4298,6 +4559,7 @@ void Bms_ExecuteVote(bool bMulti)
 public Action BmsT_Voting(Handle hTimer)
 {
 	// 单人战役: 投票整张图静默(见 Bms_IsCampaignMap)
+	// Singleplayer campaign: voting stays silent for the whole map (see Bms_IsCampaignMap)
 	if (Bms_IsCampaignMap())
 	{
 		return Plugin_Continue;
@@ -4638,8 +4900,11 @@ public Action Bms_ListenCmd_Team(int iClient, const char[] sCommand, int iArgs)
 	if (iClient <= 0)
 	{
 		// BM 2026 会以 client==0 派发 "chooseteam"(listen server 主机上下文,
+		// BM 2026 dispatches "chooseteam" with client==0 (listen server host context;
 		// 实测 "Team is full" 拒绝后引擎从服务器端重发),GetClientTeam(0)
+		// in testing, after a "Team is full" rejection the engine re-sends it from the server side), and GetClientTeam(0)
 		// 会抛 "Client index 0 is invalid"。服务器端调用直接放行给引擎。
+		// throws "Client index 0 is invalid". Server-side calls are let straight through to the engine.
 		return Plugin_Continue;
 	}
 	int iTeam = BMS_TEAM_SPECTATORS;
@@ -4655,8 +4920,11 @@ public Action Bms_ListenCmd_Team(int iClient, const char[] sCommand, int iArgs)
 	else if (StrEqual(sCommand, "chooseteam", false))
 	{
 		// BM 2026 引擎没有队伍选择面板(VGUI PANEL_* 全部被删),"chooseteam"
+		// The BM 2026 engine has no team-selection panel (all VGUI PANEL_* were deleted); "chooseteam"
 		// (默认 M 键)到引擎后什么都不做。这里把它当观战/上场切换:
+		// (default M key) does nothing once it reaches the engine. Here we treat it as a spectate/join toggle:
 		// 观战 → 参赛队 0,参赛 → 观战队 1。
+		// spectating → playing team 0, playing → spectator team 1.
 		iTeam = (GetClientTeam(iClient) == BMS_TEAM_SPECTATORS) ? 0 : BMS_TEAM_SPECTATORS;
 		bRoute = true;
 	}
@@ -4690,9 +4958,13 @@ public Action Bms_ListenCmd_Team(int iClient, const char[] sCommand, int iArgs)
 	if (bRoute)
 	{
 		// 不依赖引擎的 "spectate"/"chooseteam" ClientCommand 分支(BM 2026
+		// Do not rely on the engine's "spectate"/"chooseteam" ClientCommand branches (in BM 2026
 		// 已不存在):统一改走 jointeam 的引擎正式通道(HandleCommand_JoinTeam
+		// they no longer exist): uniformly go through jointeam's official engine path (HandleCommand_JoinTeam
 		// → ChangeTeam,含 mp_allowspectators 检查/自杀平衡/观察者状态机),
+		// → ChangeTeam, including the mp_allowspectators check / suicide balance / observer state machine),
 		// 与 forcespec/自动分队同一条路。iAllowed 放行本插件的监听器。
+		// the same path as forcespec/auto-team-assign. iAllowed lets this plugin's listener through.
 		gBmsSpecial.iAllowed = iClient;
 		FakeClientCommandEx(iClient, "jointeam %d", iTeam);
 		return Plugin_Handled;
@@ -4705,13 +4977,18 @@ public Action Bms_ListenCmd_Pause(int iClient, const char[] sCommand, int iArgs)
 	if (iClient == 0)
 	{
 		// 服务器端派发:同步状态机,并吞掉引擎回显。listen server 上引擎每次
+		// Server-side dispatch: sync the state machine and swallow the engine echo. On a listen server, after every
 		// 暂停/恢复后会把同一条命令回显给客户端,主机端回显以 client==0
+		// pause/resume the engine echoes the same command back to the client, and the host-side echo is
 		// 重新派发("pause" 是 toggle,再放行一次会立刻取消暂停)。远程玩家
+		// re-dispatched with client==0 ("pause" is a toggle, so letting it through once more immediately cancels the pause). Remote players'
 		// 的回显则以玩家命令到达,由下面的客户端分支处理。
+		// echoes instead arrive as player commands and are handled by the client branch below.
 		bool bPause = StrEqual(sCommand, "pause", false);
 		if (StrEqual(sCommand, "setpause", false))
 		{
 			// "setpause" 无条件置暂停(非 toggle),由引擎内部调用;只同步状态
+			// "setpause" unconditionally sets paused (not a toggle), called by the engine internally; sync state only
 			if (gBmsRound.iState == BmsState_Match || gBmsRound.iState == BmsState_MatchEx)
 			{
 				Bms_SetState(BmsState_Paused);
@@ -4721,17 +4998,20 @@ public Action Bms_ListenCmd_Pause(int iClient, const char[] sCommand, int iArgs)
 		if (!Bms_IsGameMatch())
 		{
 			// 公服状态不干预:放行,由 mod_pause 自己维护 g_bPaused
+			// Don't interfere in public-server state: let it through; mod_pause maintains g_bPaused itself
 			return Plugin_Continue;
 		}
 		if (bPause && gBmsRound.iState == BmsState_Paused)
 		{
 			// 已暂停时到达的 pause = 引擎回显或重复输入;放行会再次 toggle
+			// A pause arriving while already paused = engine echo or duplicate input; letting it through toggles again
 			LogMessage("[bms_match] swallow 'pause' echo (client 0, already Paused)");
 			return Plugin_Handled;
 		}
 		if (!bPause && gBmsRound.iState != BmsState_Paused)
 		{
 			// 未暂停时到达的 unpause/setpause = 引擎回显;放行会重新暂停
+			// An unpause/setpause arriving while not paused = engine echo; letting it through re-pauses
 			LogMessage("[bms_match] swallow '%s' echo (client 0, state %d)", sCommand, gBmsRound.iState);
 			return Plugin_Handled;
 		}
@@ -4750,15 +5030,22 @@ public Action Bms_ListenCmd_Pause(int iClient, const char[] sCommand, int iArgs)
 		return Plugin_Continue;
 	}
 	// 引擎的 "pause" 是 toggle(engine.dll:SetPaused(!IsPaused)),而且引擎每次
+	// The engine's "pause" is a toggle (engine.dll:SetPaused(!IsPaused)), and after every
 	// 暂停/恢复后会把同一条命令回显给客户端、客户端再作为玩家命令发回来,
+	// pause/resume the engine echoes the same command back to the client, which then sends it back as a player command,
 	// 造成同一条输入被派发两次。所以这里必须按命令名判断方向(不能用
+	// causing the same input to be dispatched twice. So here we must judge the direction by command name (we cannot
 	// "当前状态" 推断),并把与状态不符的命令吞掉 —— 否则回显会再次翻转
+	// infer it from "current state"), and swallow commands that contradict the state — otherwise the echo flips
 	// 引擎状态、打印相反文本(实测:sm_pause 后跟 "比赛已继续",sm_unpause
+	// the engine state again and prints the opposite text (observed: sm_pause followed by "比赛已继续", sm_unpause
 	// 后跟 "比赛已暂停")。
+	// followed by "比赛已暂停").
 	bool bPause = StrEqual(sCommand, "pause", false);
 	if (StrEqual(sCommand, "setpause", false))
 	{
 		// "setpause" 无条件置暂停(非 toggle),引擎内部使用:只同步状态
+		// "setpause" unconditionally sets paused (not a toggle), used internally by the engine: sync state only
 		if (gBmsRound.iState == BmsState_Match || gBmsRound.iState == BmsState_MatchEx)
 		{
 			Bms_SetState(BmsState_Paused);
@@ -4768,11 +5055,13 @@ public Action Bms_ListenCmd_Pause(int iClient, const char[] sCommand, int iArgs)
 	if (bPause && gBmsRound.iState == BmsState_Paused)
 	{
 		// 已暂停时收到的 pause = 引擎回显或重复按键;放行会把暂停取消掉
+		// A pause received while already paused = engine echo or repeated keypress; letting it through cancels the pause
 		return Plugin_Handled;
 	}
 	if (!bPause && gBmsRound.iState != BmsState_Paused)
 	{
 		// 未暂停时收到的 unpause/setpause = 引擎回显或多余输入;吞掉
+		// An unpause/setpause received while not paused = engine echo or spurious input; swallow it
 		return Plugin_Handled;
 	}
 	if (gBmsRound.iState == BmsState_MatchWait)
@@ -4793,6 +5082,7 @@ public Action Bms_ListenCmd_Pause(int iClient, const char[] sCommand, int iArgs)
 	if (bPause)
 	{
 		// 发起暂停:仅管理员(暂停发起者必然是自己,其他人一律拒绝)
+		// Initiating a pause: admins only (the pause initiator is necessarily oneself; everyone else is refused)
 		if (iClient != gBmsSpecial.iPauser && !Bms_IsClientAdmin(iClient))
 		{
 			mod_textmsg_fix_SafePrintToChat(iClient, "%t", "bms_pause_deny_pauser");
@@ -4805,6 +5095,7 @@ public Action Bms_ListenCmd_Pause(int iClient, const char[] sCommand, int iArgs)
 	else
 	{
 		// 恢复:发起人或管理员;自动暂停(iPauser=0)时参赛者(非观战)可恢复
+		// Resuming: the initiator or an admin; for an auto-pause (iPauser=0) a participant (non-spectator) can resume
 		if (iClient != gBmsSpecial.iPauser && !Bms_IsClientAdmin(iClient)
 			&& (gBmsSpecial.iPauser != 0 || IsClientObserver(iClient)))
 		{
@@ -5008,9 +5299,13 @@ public Action Bms_OnClientSayCommand(int iClient, const char[] sCommand, const c
 		else if (StrEqual(sArgs[i], "pause", false))
 		{
 			// 拦截在聊天触发(sm_pause)之前,直接驱动引擎。只发起引擎命令
+			// Intercept before the chat trigger (sm_pause) and drive the engine directly. Only issue the engine command
 			// 并打印;状态同步由 Bms_ListenCmd_Pause 的 client==0 分支在命令
+			// and print; state sync is done by Bms_ListenCmd_Pause's client==0 branch when the command is
 			// 实际派发时完成 —— 若这里先把状态置为 Paused,监听器会把
+			// actually dispatched — if we set the state to Paused here first, the listener would treat
 			// ServerCommand("pause") 当成回显吞掉,引擎永远不会真正暂停。
+			// ServerCommand("pause") as an echo and swallow it, and the engine would never actually pause.
 			if (gBmsRound.iState == BmsState_Match || gBmsRound.iState == BmsState_MatchEx)
 			{
 				if (gBmsRound.iState == BmsState_MatchEx)
@@ -5039,6 +5334,7 @@ public Action Bms_OnClientSayCommand(int iClient, const char[] sCommand, const c
 			else
 			{
 				// 非比赛状态:放行给 sm_pause 聊天触发,公服暂停照常
+				// Not in a match: let it through to the sm_pause chat trigger; public-server pause proceeds as usual
 				return Plugin_Continue;
 			}
 			return Plugin_Stop;
@@ -5050,6 +5346,7 @@ public Action Bms_OnClientSayCommand(int iClient, const char[] sCommand, const c
 				if (iClient == gBmsSpecial.iPauser || gBmsSpecial.iPauser == 0 || Bms_IsClientAdmin(iClient))
 				{
 					// 状态同步由监听器的 client==0 分支完成(同 !pause)
+					// State sync is done by the listener's client==0 branch (same as !pause)
 					ServerCommand("unpause");
 					Bms_SayAll("%t", "bms_match_resumed");
 					gBmsSpecial.iPauser = 0;
@@ -5066,6 +5363,7 @@ public Action Bms_OnClientSayCommand(int iClient, const char[] sCommand, const c
 			else
 			{
 				// 非比赛状态:放行给 sm_unpause 聊天触发
+				// Not in a match: let it through to the sm_unpause chat trigger
 				return Plugin_Continue;
 			}
 			return Plugin_Stop;
@@ -5402,9 +5700,13 @@ public Action BmsCmd_Start(int iClient, int iArgs)
 
 	char sReason[32];
 	// 至少 2 名玩家(含 bot)才能开始比赛,对所有玩家一视同仁 —— 不再给
+	// At least 2 players (including bots) are required to start a match, applied equally to all players — no more
 	// 管理员豁免(单人测试走 !starttest)。bot 是 DM 的正式参战者,bot_add
+	// admin exemption (single-player testing uses !starttest). Bots are legitimate DM combatants; bot_add
 	// 在 BM 被设为作弊命令、只有管理员/服主加得出来,不会被普通玩家滥用。
+	// is set as a cheat command in BM and only admins/owners can add them, so ordinary players cannot abuse it.
 	// 投票门槛(下方)仍只按真人算,3 名真人照常走投票。
+	// The vote threshold (below) still counts only real players, and 3 real players still go through the vote as usual.
 	if (Bms_PlayerCount(true, true, false) <= 1)
 	{
 		strcopy(sReason, sizeof(sReason), "playercount");
@@ -6473,46 +6775,79 @@ public void OnPluginStart()
 	gBmsCvar.mp_round_intermission_time = FindConVar("mp_round_intermission_time");
 	gBmsCvar.mapvote_endvote = FindConVar("sm_mapvote_endvote");
 	// 状态页(倒计时/状态/地图/人数)。0 = 关, 1 = 只发给死亡/观战的人,
+	// Status page (countdown/state/map/player count). 0 = off, 1 = only to dead/spectating players,
 	// 2 = 所有人。默认 2: 用户要求所有人常驻。
+	// 2 = everyone. Default 2: the user asked for it to be resident for everyone.
 	gBmsStatusPage = CreateConVar("bms_status_page", "2", "Status page (countdown/state/map/players): 0=off, 1=dead/spectators only, 2=everyone", FCVAR_NOTIFY);
 	gBmsStatusActive = CreateConVar("bms_status_active", "0", "Internal: 1 while bms_match owns the hint text (showhealth reads it)", FCVAR_DONTRECORD);
 	// 0 = 走 hint 面板(HintText/KeyHintText): 有底框, 贴屏幕右侧, 但每条消息
+	// 0 = use the hint panel (HintText/KeyHintText): has a background box, hugs the right of the screen, but for every message
 	//     客户端都把整块动画从头重播(HintSize 0->1), 1 Hz 下就是每秒闪一下。
+	//     the client replays the whole animation from the start (HintSize 0->1), so at 1 Hz it blinks once a second.
 	// 1 = 走 HudMsg(CHudMessage): 屏幕上的纯文本, 没有底框, 但每秒刷新也不闪。
+	// 1 = use HudMsg (CHudMessage): plain text on screen, no background box, but refreshing every second does not blink.
 	// 2 = 同样是 HudMsg, 但改用紧凑排版, 腾出两行画「自己 K/D/ping + 前五名」。
+	// 2 = also HudMsg, but with a compact layout, freeing two lines to draw "own K/D/ping + top 5".
 	//     (早先这里走 SendPanelToClient 的 VGUI 面板, 结果是那块面板常驻占着
+	//     (earlier this used a SendPanelToClient VGUI panel, but that panel permanently occupied the
 	//      客户端的菜单槽, 整个游戏里所有切枪键全部失效 —— 已废。)
+	//      client's menu slot, so every weapon-switch key in the whole game stopped working — abandoned.)
 	gBmsStatusChannel = CreateConVar("bms_status_channel", "0", "Status page transport: 0=hint panel (box, right-anchored, flickers), 1=HudMsg (no box, 6 lines), 2=HudMsg compact (same, plus own K/D/ping and the top-5 board)", FCVAR_NOTIFY);
 	// 仅 bms_status_channel 0 时有效:
+	// Only effective when bms_status_channel is 0:
 	// 0 = HintText (CHudHintDisplay) —— 原来 Show Health 用的那块**长条**,
+	// 0 = HintText (CHudHintDisplay) — the **long bar** the original Show Health used,
 	//     天生静音(音效名 "Hud.Hint" 在 BM 里不存在)、动画不动 HintSize 所以
+	//     silent by nature (the sound name "Hud.Hint" doesn't exist in BM), and the animation doesn't touch HintSize so it
 	//     不闪。代价是客户端 scheme 里没有 "HudHintText" 字体, 行高算出来是 0,
+	//     doesn't blink. The cost is that the client scheme has no "HudHintText" font and the computed line height is 0,
 	//     **只能发单行**(状态页在单行模式下把各行用 " | " 拼起来)。
+	//     so **only a single line can be sent** (in single-line mode the status page joins the lines with " | ").
 	// 1 = KeyHintText (CHudHintKeyDisplay) —— 多行在任何客户端上都正常, 但每条
+	// 1 = KeyHintText (CHudHintKeyDisplay) — multiple lines work on any client, but each
 	//     消息播一声 hev_vox/blip.wav(服务端关不掉, 只能让客户端执行
+	//     message plays hev_vox/blip.wav (the server cannot turn it off; it can only make the client execute
 	//     cl_hudhint_sound 0), 而且每发一条都会重播 HintSize 0->1 的缩放动画。
+	//     cl_hudhint_sound 0), and every message replays the HintSize 0->1 scaling animation.
 	gBmsStatusKeyHint = CreateConVar("bms_status_keyhint", "1", "Status page hint panel: 0=HintText (show-health long bar, silent, single line), 1=KeyHintText (narrow box, multi-line, beeps)", FCVAR_NOTIFY);
 	// 0 = 由本插件关掉 hint 面板的音效: 服务端 sv_hudhint_sound 压成 0, 再让每个
+	// 0 = this plugin silences the hint panel sound: forces server sv_hudhint_sound to 0, then has each
 	// 客户端执行一次 cl_hudhint_sound 0。1 = 全部交还给玩家自己的设置。
+	// client execute cl_hudhint_sound 0 once. 1 = hand everything back to the player's own settings.
 	// 两边都只在运行时改, 不写任何 cfg 文件(客户端的 ARCHIVE 标记会自己存盘)。
+	// Both are changed only at runtime and never written to any cfg file (the client's ARCHIVE flag saves itself).
 	gBmsStatusHintSound = CreateConVar("bms_status_hintsound", "0", "Status page: 0 = silence the hint panel (sv_hudhint_sound 0 + cl_hudhint_sound 0 on each client), 1 = leave the players' own settings alone", FCVAR_NOTIFY);
 	// HudMsg 的第二组颜色(客户端把 8 个字节原样存进槽位对象的 +4..+0xb)。
+	// The second colour group of HudMsg (the client stores the 8 bytes verbatim at +4..+0xb of the slot object).
 	// 1 = 第二组写黑色, 当作描边/阴影用; **默认关**, 因为客户端是否真的画
+	// 1 = write the second group in black, used as an outline/shadow; **off by default**, because whether the client actually draws
 	// 第二组还没实测 —— 如果它是在同一坐标上画的, 黑字会直接把黄字盖掉,
+	// the second group has not been tested yet — if it draws at the same coordinates, the black text would directly cover the yellow text,
 	// 游戏里 `sm_cvar bms_status_shadow 1` 一眼就能分辨。
+	// which `sm_cvar bms_status_shadow 1` in game makes obvious at a glance.
 	gBmsStatusShadow = CreateConVar("bms_status_shadow", "0", "Status page: 1 = colour the HudMsg second colour quad black (outline test)", FCVAR_NOTIFY);
 	// 文字右边界。HudMessage 面板 = 700x480 HUD 单位、左上角 (0,0), 面板右边
+	// Text right edge. The HudMessage panel = 700x480 HUD units with the top-left at (0,0), so the panel's right edge
 	// 换算成屏幕宽比例是 700 / (480 * 宽高比): 16:9 ≈ 0.820, 16:10 ≈ 0.911,
+	// converted to a fraction of screen width is 700 / (480 * aspect): 16:9 ≈ 0.820, 16:10 ≈ 0.911,
 	// 4:3 ≈ 1.09(不裁), 21:9 ≈ 0.625。服务端查不到客户端的宽高比, 所以默认
+	// 4:3 ≈ 1.09 (no clipping), 21:9 ≈ 0.625. The server cannot query the client's aspect, so the default
 	// 按 16:10 贴边(0.89); 16:9 的客户端要用 sm_cvar bms_status_right 0.81,
+	// hugs the edge for 16:10 (0.89); 16:9 clients should use sm_cvar bms_status_right 0.81,
 	// 带鱼屏 0.60 左右。
+	// and ultrawide screens around 0.60.
 	gBmsStatusRight = CreateConVar("bms_status_right", "0.89", "Status page: right edge of the HudMsg text block (0..1 of screen width; 16:10 max ~0.91, 16:9 max ~0.82)", FCVAR_NOTIFY);
 	// 记分块只在通道 2 上画: 那边为它把「状态/倒计时/地图」压成一行、
+	// The stats block is drawn only on channel 2: there the status/countdown/map are squeezed onto one line
 	// 让掉 !help, 才腾得出「自己 K/D/Ping + 前五名」这几行。
+	// and !help is given up, purely to free these lines for "own K/D/Ping + top 5".
 	gBmsStatusStats = CreateConVar("bms_status_stats", "1", "Status page: 1 = append K/D/ping + top 5 to the compact channel (bms_status_channel 2)", FCVAR_NOTIFY);
 	// 让位窗口(绝对服务器时间)。投票/菜单弹出来时把状态页挪开, 免得文字压在
+	// Yield window (absolute server time). When a vote/menu pops up, move the status page away so its text does not pile onto
 	// 选项上 —— 弹菜单之前把这里的值推到 GetGameTime()+时长, 关掉之后自动恢复。
+	// the options — before popping the menu, push this value to GetGameTime()+duration; it recovers automatically after closing.
 	// 投票插件都写成 FindConVar("bms_status_yield") + 写值, 不跨模块调函数。
+	// Vote plugins all do FindConVar("bms_status_yield") + write the value; no cross-module function calls.
 	gBmsStatusYield = CreateConVar("bms_status_yield", "0", "Internal: absolute game time until which the status page stays off the screen (menus/votes set it)", FCVAR_DONTRECORD);
 	// CGameRules::SetState(int) SDKCall. this = g_pGameRules (auto), one int
 	// parameter (newState), void return. The address comes from the gamedata
@@ -6573,7 +6908,9 @@ public void OnConfigsExecuted()
 	}
 
 	// server.cfg 可能带着 sv_hudhint_sound 1(引擎默认也是 1), 每条 hint 消息
+	// server.cfg may carry sv_hudhint_sound 1 (the engine default is also 1), and every hint message
 	// 客户端都会播一声。这里按 bms_status_hintsound 在内存里压成 0。
+	// makes the client play a sound. Here we force it to 0 in memory according to bms_status_hintsound.
 	Bms_ApplyHintSound();
 }
 
@@ -6588,10 +6925,15 @@ public void OnMapStart()
 	GetCurrentMap(gBmsRound.sMap, sizeof(gBmsRound.sMap));
 	strcopy(gBmsRound.sNextMode, sizeof(gBmsRound.sNextMode), gBmsRound.sMode);
 	// 必须带上 Bms_TeamplayAvailable(): server.cfg 里 mp_teamplay 可能是 1, 但
+	// Must include Bms_TeamplayAvailable(): mp_teamplay in server.cfg may be 1, but
 	// BM DM 的 gamerules 只注册 team 0(unassigned) 和 team 1(spectator),
+	// BM DM's gamerules only register team 0 (unassigned) and team 1 (spectator),
 	// GetTeamClientCount(REBELS=3) 会抛 "Team index 3 is invalid" —— 每客户端
+	// so GetTeamClientCount(REBELS=3) throws "Team index 3 is invalid" — the per-client
 	// 每秒一次的 BmsT_TeamAutoAssign 定时器因此被异常打断(永远走不到
+	// once-per-second BmsT_TeamAutoAssign timer is therefore interrupted by the exception (it never reaches
 	// Plugin_Stop), errors 日志被刷满, 选手也永远上不了场。
+	// Plugin_Stop), the errors log gets flooded, and players can never get onto the field.
 	gBmsRound.bTeamplay = (gBmsCvar.mp_teamplay != null && gBmsCvar.mp_teamplay.BoolValue
 		&& Bms_TeamplayAvailable());
 	gBmsRound.bOvertime = (Bms_GetConfigInt("Overtime", "Gamemodes", gBmsRound.sMode, 0) == 1);

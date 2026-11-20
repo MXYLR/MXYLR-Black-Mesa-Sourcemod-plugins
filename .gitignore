@@ -11,3 +11,6 @@ __pycache__/
 # 备份文件
 *.bak
 *.orig
+
+# Release 打包产物(由 smx_analysis/make_release_zips.py 生成)
+dist/

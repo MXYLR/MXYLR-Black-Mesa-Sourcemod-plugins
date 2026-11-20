@@ -22,6 +22,7 @@ int g_iBatchTick = -1;
 int g_iBatchCount;
 
 // 当前地图是不是单人战役: -1 = 还没判定, 0 = 不是, 1 = 是。见 FS_Campaign()。
+// Whether the current map is a singleplayer campaign: -1 = not yet determined, 0 = no, 1 = yes. See FS_Campaign().
 int g_iMapCampaign = -1;
 
 public void OnPluginStart()
@@ -46,25 +47,39 @@ public void OnPluginStart()
 public void OnConfigsExecuted()
 {
 	// 强制零秒重生:任何 cfg 的执行顺序/内容都无法把它改回非零。
+	// Force zero-second respawn: no cfg execution order/content can set it back to non-zero.
 	g_hRespawnTime.SetFloat(0.0);
 }
 
 // --------------------------------------------------------------- 单人战役判定
+// --------------------------------------------------------------- Singleplayer campaign detection
 //
 // 这套插件原本只为死亡竞赛写, 但同一个 SourceMod 装在两个环境里跑
+// This plugin was originally written only for deathmatch, but the same SourceMod installation runs in two environments
 // (单人战役 listen server + 死亡服), 而 fast_spawn 的每条行为都只在 DM 下成立:
+// (singleplayer campaign listen server + deathmatch server), and every fast_spawn behavior only makes sense under DM:
 //
 //   * 单人战役里死亡 = 读档, 不是重生。零秒重生会把玩家从刚读的档里拽出来,
+//   * In singleplayer campaign, death = load save, not respawn. Instant respawn yanks the player out of the just-loaded save,
 //     把武器掉到地上更会直接毁掉手上的装备。
+//     and dropping weapons to the ground outright destroys the equipment in hand.
 //   * FS_OnTakeDamageAlivePost 的「致死时把武器掉到地上」只在 DM 下成立;
+//   * FS_OnTakeDamageAlivePost's "drop weapons to the ground on lethal hit" only makes sense under DM;
 //     在战役里动了玩家手里的东西, 读档回来的装备就没了。(历史上这条曾在
+//     touching what the player holds in campaign means the equipment is gone after loading a save. (Historically this was once done in
 //     OnTakeDamage 里按原始伤害预测致死, 因回调按 SDKHook() 注册顺序=插件加载
+//     OnTakeDamage by predicting lethality from raw damage, because callbacks run in SDKHook() registration order = plugin load
 //     顺序执行, BMAG 字母序在 tau_mp 之前 → 看到的是未经 tau_mp 跌落伤害封顶的
+//     order; BMAG sorts alphabetically before tau_mp → it saw raw damage before tau_mp's fall-damage cap was applied;
 //     原始伤害; 现在改成扣血之后按实时血量判定, 不再有这类顺序问题。)
+//     now it checks live health after damage is applied, so this ordering issue no longer exists.)
 //
 // 判据: 战役地图全部形如 bm_c<数字>*(bm_c0a0a … bm_c5a1a); DM 侧地图是
+// Criterion: all campaign maps look like bm_c<digit>* (bm_c0a0a … bm_c5a1a); DM-side maps are
 // dm_*/de_*/bm_bunnyrace_beta2, **没有任何地图以 bm_c<数字> 开头**, 所以前缀
+// dm_*/de_*/bm_bunnyrace_beta2, **no map starts with bm_c<digit>**, so the prefix
 // 匹配安全。判定写错时默认偏向 DM(即保留本插件原有行为)。
+// match is safe. If the detection is wrong it defaults toward DM (i.e. keeps the plugin's original behavior).
 bool FS_Campaign()
 {
 	if (g_iMapCampaign == -1)
@@ -84,6 +99,7 @@ bool FS_Campaign()
 }
 
 // 所有 fast_spawn 行为的统一闸门: cvar 开着 **且** 不在战役地图里。
+// Unified gate for all fast_spawn behavior: cvar enabled **and** not on a campaign map.
 bool FS_Active()
 {
 	return g_hEnabled.BoolValue && !FS_Campaign();
@@ -170,6 +186,7 @@ public void OnClientPutInServer(int client)
 	if (!SDKHookEx(client, SDKHook_OnTakeDamageAlivePost, FS_OnTakeDamageAlivePost))
 	{
 		// 钩不上 = 死亡时只掉当前手持武器(原生行为), 留个明确信号。
+		// Hook failure = only the currently held weapon drops on death (native behavior); leave a clear signal.
 		LogError("[fast_spawn] SDKHook_OnTakeDamageAlivePost failed on client %d", client);
 	}
 }
@@ -192,23 +209,39 @@ public Action Event_Death(Event event, const char[] name, bool dontBroadcast)
 }
 
 // 重生刷默认装备时武器有几率掉地上的根因: GiveDefaultItems 在 player_spawn 之后
+// Root cause of weapons sometimes dropping to the ground when the default loadout is given on respawn: GiveDefaultItems runs after player_spawn
 // (CHL2MP_Player::Spawn 里 BaseClass::Spawn() 返回后才调)刷武器, 走
+// (called in CHL2MP_Player::Spawn only after BaseClass::Spawn() returns) to give weapons, via
 // GiveNamedItem → DispatchSpawn → 武器 Spawn(FallInit) → Touch(this) →
+// GiveNamedItem → DispatchSpawn → weapon Spawn(FallInit) → Touch(this) →
 // DefaultTouch → CHL2MP_Player::BumpWeapon。BumpWeapon 里有一道视线门:
+// DefaultTouch → CHL2MP_Player::BumpWeapon. Inside BumpWeapon there is a line-of-sight gate:
 //   if (!pWeapon->FVisible(this, MASK_SOLID) && !(GetFlags() & FL_NOTARGET))
 //       return false;
 // 当玩家被 spawn_distribute 传到静止 bot 身上(其位置占用判定刻意排除 bot, 见
+// When a player is teleported by spawn_distribute onto a stationary bot (its position occupancy check deliberately excludes bots, see
 // spawn_distribute.sp), 武器出生在 bot 的 bbox 里 → FVisible 从武器中心到玩家
+// spawn_distribute.sp), the weapon spawns inside the bot's bbox → FVisible's trace from the weapon center to the player's
 // 眼睛的 trace 被 bot 挡住(startsolid)→ 返回 false → BumpWeapon 拒绝装备 →
+// eyes is blocked by the bot (startsolid) → returns false → BumpWeapon refuses to equip →
 // FallInit 的 FallThink 把武器掉到地上(有几率, 取决于是否恰好叠到 bot)。
+// FallInit's FallThink drops the weapon to the ground (probabilistically, depending on whether it happens to overlap the bot).
 // 其余门(IsAllowedToPickupWeapons/pOwner/Weapon_CanUse/CanHavePlayerItem)经
+// All other gates (IsAllowedToPickupWeapons/pOwner/Weapon_CanUse/CanHavePlayerItem) were
 // 源码核对全部恒真, FVisible 是唯一会间歇失败的门。
+// verified against the source to always be true; FVisible is the only gate that fails intermittently.
 // 修法: player_spawn 先于 GiveDefaultItems, 在这里给玩家挂 FL_NOTARGET, 使上面的
+// Fix: player_spawn fires before GiveDefaultItems, so set FL_NOTARGET on the player here, making the above gate's
 // 门第二项 !(FL_NOTARGET) 为 false → 整条门为 false → 绕过 FVisible 直接装备;
+// second term !(FL_NOTARGET) false → the whole gate is false → bypass FVisible and equip directly;
 // 下一帧 RequestFrame 再清掉。FL_NOTARGET 只影响这一帧的视线/AI 判定, HL2MP
+// RequestFrame clears it on the next frame. FL_NOTARGET only affects line-of-sight/AI checks for this one frame, HL2MP
 // 无 NPC 敌人(全是玩家), 无副作用。仅在 FS_Active() 为真时生效(与致死时掉武器的
+// has no NPC enemies (all players), so no side effects. Only applies when FS_Active() is true (consistent with the on-lethal-hit weapon drop
 // FS_OnTakeDamageAlivePost 一致; 比赛期 bms_match 置 sm_fastspawn=0, 单人战役由
+// in FS_OnTakeDamageAlivePost; during a match bms_match sets sm_fastspawn=0, and the singleplayer campaign is
 // FS_Campaign() 关掉, 两种情况都不干预)。
+// turned off by FS_Campaign(), so neither case is affected).
 public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast)
 {
 	if (!FS_Active())
@@ -240,24 +273,40 @@ void FS_ClearNoTarget(any iUserID)
 }
 
 // 玩家被打死时, 手里的武器掉到地上(可以被别人捡), 而不是跟着尸体消失。
+// When a player is killed, the weapons in hand drop to the ground (others can pick them up) instead of vanishing with the corpse.
 //
 // 原生只掉"当前手持"那一把: CBaseCombatCharacter::Event_Killed 调
+// Natively only the "currently held" one drops: CBaseCombatCharacter::Event_Killed calls
 // Weapon_Drop(m_hActiveWeapon)(DEADPLAYER_WEAPONS = GR_PLR_DROP_GUN_ACTIVE),
 // 其余槽位本来由 PlayerDeathThink 里的 RemoveAllItems 清掉 —— 但 fast_spawn 的
+// the other slots are normally cleared by RemoveAllItems in PlayerDeathThink —— but fast_spawn's
 // 零秒重生在 PlayerDeathThink 之前就 Spawn() 了(SetThink(NULL) 把它取消), 于是
+// instant respawn calls Spawn() before PlayerDeathThink (SetThink(NULL) cancels it), so
 // 非主动武器会被带过死亡、重生后还留在身上。所以在致死落定、Event_Killed 之前,
+// non-active weapons are carried through death and remain on the player after respawn. So once the lethal hit is settled and before Event_Killed,
 // 把 6 个槽位全部主动 Drop 出去: 武器落地, 玩家重生时是干净的默认装备。
+// actively Drop all 6 slots: the weapons land on the ground, and the player respawns with a clean default loadout.
 //
 // 判定点必须是 OnTakeDamageAlive 的 **Post**, 不能是 OnTakeDamage(槽 68):
+// The check point must be OnTakeDamageAlive's **Post**, not OnTakeDamage (slot 68):
 //   0x104780D0 CBasePlayer::OnTakeDamage 先扣护甲(m_ArmorValue 在 player+0xDA4,
+//   0x104780D0 CBasePlayer::OnTakeDamage first applies armor (m_ArmorValue at player+0xDA4,
 //   最多吃掉 80% 伤害), 再调 CBaseEntity::OnTakeDamage(0x100FAC20), 后者才派发
+//   absorbing at most 80% of damage), then calls CBaseEntity::OnTakeDamage (0x100FAC20), which dispatches
 //   slot 0x490(OnTakeDamageAlive → 扣血) → 检查 health<=0 → slot 0x120(Event_Killed)。
+//   slot 0x490 (OnTakeDamageAlive → apply damage) → check health<=0 → slot 0x120 (Event_Killed).
 // 所以槽 68 钩子看到的是**护甲吸收前**的原始伤害。DM 每张图都摆了 item_battery
+// So a slot 68 hook sees **pre-armor-absorption** raw damage. Every DM map places item_battery
 // (拾取加护甲), 玩家只要捡过电池, 一次 raw damage >= health 的打击被护甲吃掉
+// (pickup grants armor), so if a player ever picked up a battery, a hit with raw damage >= health has part
 // 一部分后玩家仍然活着 —— 槽 68 上按原始伤害判死会误判。Post 钩子在扣血之后、
+// absorbed by armor and the player is still alive —— judging death by raw damage on slot 68 would misjudge. The Post hook, after damage is applied and
 // Event_Killed 之前, 直接读当前血量判死活, 不再预测伤害。
+// before Event_Killed, reads current health directly to judge alive/dead, no longer predicting damage.
 // 只在 FS_Active() 为真时生效 —— 比赛期 bms_match 把 sm_fastspawn 置 0(保留
+// Only applies when FS_Active() is true —— during a match bms_match sets sm_fastspawn to 0 (keeping
 // 原生掉落), 单人战役由 FS_Campaign() 关掉(战役里死亡=读档, 别动玩家手里的东西)。
+// native drops); the singleplayer campaign is turned off by FS_Campaign() (in campaign death = load save, don't touch what the player holds).
 public void FS_OnTakeDamageAlivePost(int victim, int attacker, int inflictor, float damage, int damagetype, int weapon, const float damageForce[3], const float damagePosition[3], int damagecustom)
 {
 	if (!FS_Active())
@@ -276,11 +325,17 @@ public void FS_OnTakeDamageAlivePost(int victim, int attacker, int inflictor, fl
 	}
 
 	// bot 不铺满一地武器: 只留原生掉落(Event_Killed 掉"当前手持"那一把), 其余
+	// Bots don't litter the ground with weapons: keep only the native drop (Event_Killed drops the "currently held" one); the other
 	// 槽位在这里直接删掉 —— 不能留着。0 秒重生在 PlayerDeathThink 之前就 Spawn()
+	// slots are deleted here directly —— they cannot be kept. Instant respawn calls Spawn() before PlayerDeathThink,
 	// 了, 旧武器不会像原生那样被 RemoveAllItems 清掉; 而重生时 GiveDefaultItems
+	// so old weapons are not cleared by RemoveAllItems as in native; and on respawn GiveDefaultItems
 	// 对已经拥有的武器走 dedup 不再补发(见 BumpWeapon/Weapon_OwnsThisType), 偏偏
+	// dedups already-owned weapons and does not re-give them (see BumpWeapon/Weapon_OwnsThisType), yet
 	// m_hActiveWeapon 已被死亡清空 → bot 两手空空, 地上那把旧枪又因为"同型武器
+	// m_hActiveWeapon was already cleared by death → the bot has empty hands, and the old gun on the ground can't be picked up because "a weapon of the same type
 	// 还在背包里"捡不起来。删掉非手持武器后重生就是一套干净的默认装备。
+	// is still in the inventory". After deleting non-held weapons, respawn gives a clean default loadout.
 	if (IsFakeClient(victim))
 	{
 		FS_RemoveNonActiveWeapons(victim);
@@ -317,9 +372,13 @@ void FS_RemoveNonActiveWeapons(int client)
 }
 
 // 手雷/蚁狮/遥控炸弹/绊雷是捡来的消耗品, 不是可以扔地上再捡回来的枪:
+// Grenades/snarks/satchels/trip mines are picked-up consumables, not guns that can be dropped on the ground and picked back up:
 // Drop() 对它们不产生可拾取的世界实体, FS_DropWeapons 会落到 RemoveEntity
+// Drop() does not produce a pickable world entity for them, so FS_DropWeapons falls into the RemoveEntity
 // 分支, 等于死亡时被静默删掉。DM 地图上的补给是 item_weapon_frag 这类一次性
+// branch, i.e. they get silently deleted on death. Supplies on DM maps are one-shot
 // 拾取物, 删了就再也拿不到(slot5 再也切不出手雷), 所以这些留在身上, 枪照常掉。
+// pickups like item_weapon_frag; once deleted they can never be obtained again (slot5 can never switch to a grenade again), so these stay on the player; guns still drop as usual.
 bool FS_IsCarriedItem(const char[] sClass)
 {
 	return StrEqual(sClass, "weapon_frag") || StrEqual(sClass, "weapon_snark")
@@ -344,6 +403,7 @@ void FS_DropWeapons(int client)
 			SDKHooks_DropWeapon(client, weapon);
 
 			// 掉不下来的(伪武器/没有 owner 的)直接移除, 别在这里打转。
+			// Ones that can't drop (pseudo-weapons / no owner) are removed directly; don't loop here.
 			if (GetPlayerWeaponSlot(client, slot) == weapon)
 			{
 				RemovePlayerItem(client, weapon);
@@ -435,6 +495,7 @@ void FS_RespawnFrame(any iUserID)
 public void OnMapStart()
 {
 	// 换图后判据要重算(缓存跨图会错判)
+	// The criterion must be recomputed after a map change (a cache carried across maps would misjudge)
 	g_iMapCampaign = -1;
 
 	// Server-side bots never fire OnPlayerRunCmd (they call PlayerRunCommand
@@ -502,8 +563,11 @@ bool FS_IsRespawnEligible(int client)
 	}
 
 	// 主动观战(FIXED=3/IN_EYE=4/CHASE=5/POI=6/ROAMING=7)不允许被零秒重生
+	// Active spectating (FIXED=3/IN_EYE=4/CHASE=5/POI=6/ROAMING=7) must not be
 	// 拉回比赛;死亡镜头(DEATHCAM=1/FREEZECAM=2)是临死瞬间的过渡状态,
+	// pulled back into the match by instant respawn; the death camera (DEATHCAM=1/FREEZECAM=2) is the transitional state at the moment of death,
 	// 仍走零秒重生。
+	// and still goes through instant respawn.
 	if (GetEntProp(client, Prop_Send, "m_iObserverMode") >= 3)
 	{
 		return false;
